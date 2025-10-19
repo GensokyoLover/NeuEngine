@@ -67,6 +67,7 @@ public:
         ResourceFormat colorFormat = ResourceFormat::BGRA8UnormSrgb;
         /// Depth buffer format of the frame buffer.
         ResourceFormat depthFormat = ResourceFormat::D32Float;
+        int spp;
     };
 
     static ref<Testbed> create(const Options& options) { return make_ref<Testbed>(options); }
@@ -205,6 +206,7 @@ private:
         bool showUI = true;
         bool showFPS = true;
     } mUI;
+    int spp;
 };
 
 } // namespace Falcor

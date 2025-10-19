@@ -139,6 +139,8 @@ namespace Falcor
                     // Take the length of look-at vector as half a viewport size
                     const float halfLookAtLength = length(mData.posW - mData.target) * 0.5f;
                     mData.projMat = math::ortho(-halfLookAtLength, halfLookAtLength, -halfLookAtLength, halfLookAtLength, mData.nearZ, mData.farZ);
+                    mData.frameHeight = halfLookAtLength * 2;
+                    mData.frameWidth = halfLookAtLength * 2;
                 }
             }
 
@@ -171,16 +173,23 @@ namespace Falcor
                 mFrustumPlanes[i].negW = -plane.w;
             }
 
-            // Ray tracing related vectors
-            mData.cameraW = normalize(mData.target - mData.posW) * mData.focalDistance;
-            mData.cameraU = normalize(cross(mData.cameraW, mData.up));
-            mData.cameraV = normalize(cross(mData.cameraU, mData.cameraW));
-            const float ulen = mData.focalDistance * std::tan(fovY * 0.5f) * mData.aspectRatio;
-            mData.cameraU *= ulen;
-            const float vlen = mData.focalDistance * std::tan(fovY * 0.5f);
-            mData.cameraV *= vlen;
-
-            mDirty = false;
+            if (mData.focalLength != 0) {
+                // Ray tracing related vectors
+                mData.cameraW = normalize(mData.target - mData.posW) * mData.focalDistance;
+                mData.cameraU = normalize(cross(mData.cameraW, mData.up));
+                mData.cameraV = normalize(cross(mData.cameraU, mData.cameraW));
+                const float ulen = mData.focalDistance * std::tan(fovY * 0.5f) * mData.aspectRatio;
+                mData.cameraU *= ulen;
+                const float vlen = mData.focalDistance * std::tan(fovY * 0.5f);
+                mData.cameraV *= vlen;
+            }
+            else {
+                mData.cameraW = normalize(mData.target - mData.posW);
+                mData.cameraU = normalize(cross(mData.cameraW, mData.up));
+                mData.cameraV = normalize(cross(mData.cameraU, mData.cameraW));
+            }
+                mDirty = false;
+            
         }
     }
 
@@ -433,6 +442,8 @@ namespace Falcor
         camera.def_property(kPosition.c_str(), &Camera::getPosition, &Camera::setPosition);
         camera.def_property(kTarget.c_str(), &Camera::getTarget, &Camera::setTarget);
         camera.def_property(kUp.c_str(), &Camera::getUpVector, &Camera::setUpVector);
+        camera.def_property("directionResolution", &Camera::getDirectionResolution, &Camera::setDirectionResolution);
+        camera.def_property("angularResolution", &Camera::getAngularResolution, &Camera::setAngularResolution);
         camera.def(pybind11::init(&Camera::create), "name"_a = "");
     }
 }

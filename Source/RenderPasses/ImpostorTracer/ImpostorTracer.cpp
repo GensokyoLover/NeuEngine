@@ -25,18 +25,18 @@
  # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
-#include "MinimalPathTracer.h"
+#include "ImpostorTracer.h"
 #include "RenderGraph/RenderPassHelpers.h"
 #include "RenderGraph/RenderPassStandardFlags.h"
 
 extern "C" FALCOR_API_EXPORT void registerPlugin(Falcor::PluginRegistry& registry)
 {
-    registry.registerClass<RenderPass, MinimalPathTracer>();
+    registry.registerClass<RenderPass, ImpostorTracer>();
 }
 
 namespace
 {
-const char kShaderFile[] = "RenderPasses/MinimalPathTracer/MinimalPathTracer.rt.slang";
+const char kShaderFile[] = "RenderPasses/ImpostorTracer/ImpostorTracer.rt.slang";
 
 // Ray tracing settings that affect the traversal stack size.
 // These should be set as small as possible.
@@ -70,7 +70,7 @@ const char kComputeDirect[] = "computeDirect";
 const char kUseImportanceSampling[] = "useImportanceSampling";
 } // namespace
 
-MinimalPathTracer::MinimalPathTracer(ref<Device> pDevice, const Properties& props) : RenderPass(pDevice)
+ImpostorTracer::ImpostorTracer(ref<Device> pDevice, const Properties& props) : RenderPass(pDevice)
 {
     parseProperties(props);
 
@@ -79,7 +79,7 @@ MinimalPathTracer::MinimalPathTracer(ref<Device> pDevice, const Properties& prop
     FALCOR_ASSERT(mpSampleGenerator);
 }
 
-void MinimalPathTracer::parseProperties(const Properties& props)
+void ImpostorTracer::parseProperties(const Properties& props)
 {
     for (const auto& [key, value] : props)
     {
@@ -90,11 +90,11 @@ void MinimalPathTracer::parseProperties(const Properties& props)
         else if (key == kUseImportanceSampling)
             mUseImportanceSampling = value;
         else
-            logWarning("Unknown property '{}' in MinimalPathTracer properties.", key);
+            logWarning("Unknown property '{}' in ImpostorTracer properties.", key);
     }
 }
 
-Properties MinimalPathTracer::getProperties() const
+Properties ImpostorTracer::getProperties() const
 {
     Properties props;
     props[kMaxBounces] = mMaxBounces;
@@ -103,7 +103,7 @@ Properties MinimalPathTracer::getProperties() const
     return props;
 }
 
-RenderPassReflection MinimalPathTracer::reflect(const CompileData& compileData)
+RenderPassReflection ImpostorTracer::reflect(const CompileData& compileData)
 {
     RenderPassReflection reflector;
 
@@ -114,7 +114,7 @@ RenderPassReflection MinimalPathTracer::reflect(const CompileData& compileData)
     return reflector;
 }
 
-void MinimalPathTracer::execute(RenderContext* pRenderContext, const RenderData& renderData)
+void ImpostorTracer::execute(RenderContext* pRenderContext, const RenderData& renderData)
 {
     // Update refresh flag if options that affect the output have changed.
     auto& dict = renderData.getDictionary();
@@ -178,10 +178,13 @@ void MinimalPathTracer::execute(RenderContext* pRenderContext, const RenderData&
     FALCOR_ASSERT(mTracer.pVars);
 
     // Set constants.
+    auto impostor = mpScene->getImpostor();
+  
     auto var = mTracer.pVars->getRootVar();
+    
     var["CB"]["gFrameCount"] = mFrameCount;
     var["CB"]["gPRNGDimension"] = dict.keyExists(kRenderPassPRNGDimension) ? dict[kRenderPassPRNGDimension] : 0u;
-
+    impostor->bindShaderData(var["gImpostor"]);
     // Bind I/O buffers. These needs to be done per-frame as the buffers may change anytime.
     auto bind = [&](const ChannelDesc& desc)
     {
@@ -205,7 +208,7 @@ void MinimalPathTracer::execute(RenderContext* pRenderContext, const RenderData&
     mFrameCount++;
 }
 
-void MinimalPathTracer::renderUI(Gui::Widgets& widget)
+void ImpostorTracer::renderUI(Gui::Widgets& widget)
 {
     bool dirty = false;
 
@@ -226,7 +229,7 @@ void MinimalPathTracer::renderUI(Gui::Widgets& widget)
     }
 }
 
-void MinimalPathTracer::setScene(RenderContext* pRenderContext, const ref<Scene>& pScene)
+void ImpostorTracer::setScene(RenderContext* pRenderContext, const ref<Scene>& pScene)
 {
     // Clear data for previous scene.
     // After changing scene, the raytracing program should to be recreated.
@@ -242,7 +245,7 @@ void MinimalPathTracer::setScene(RenderContext* pRenderContext, const ref<Scene>
     {
         if (pScene->hasGeometryType(Scene::GeometryType::Custom))
         {
-            logWarning("MinimalPathTracer: This render pass does not support custom primitives.");
+            logWarning("ImpostorTracer: This render pass does not support custom primitives.");
         }
 
         // Create ray tracing program.
@@ -307,7 +310,7 @@ void MinimalPathTracer::setScene(RenderContext* pRenderContext, const ref<Scene>
     }
 }
 
-void MinimalPathTracer::prepareVars()
+void ImpostorTracer::prepareVars()
 {
     FALCOR_ASSERT(mpScene);
     FALCOR_ASSERT(mTracer.pProgram);

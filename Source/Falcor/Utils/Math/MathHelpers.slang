@@ -155,7 +155,10 @@ float3 latlong_map_to_world(float2 latlong)
  */
 float2 oct_wrap(float2 v)
 {
-    return (1.f - abs(v.yx)) * select(v.xy >= 0.f, 1.f, -1.f);
+    float2 sign2 = select( v.xy >= 0.0,      // bool2 条件
+        float2(1.0, 1.0), // true  →  1
+        float2(-1.0, -1.0) ); // false → -1
+    return (1.0 - abs(v.yx)) * sign2;
 }
 
 /**

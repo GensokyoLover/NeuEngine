@@ -2323,10 +2323,29 @@ namespace Falcor
         }
     }
 
+    void Scene::setImpostor(const ref<Impostor>& pImpostor)
+    {
+        /*auto it = std::find(mImpostors.begin(), mImpostors.end(), pImpostor);
+        if (it != mImpostors.end())
+        {
+            selectImpostor((uint32_t)std::distance(mImpostors.begin(), it));
+        }
+        else if (pImpostor)
+        {
+            logWarning("Selected Impostor '{}' does not exist.", pImpostor->getName());
+        }*/
+    }
+
     const ref<Camera>& Scene::getCamera() const
     {
         FALCOR_CHECK(mSelectedCamera < mCameras.size(), "Selected camera index {} is invalid.", mSelectedCamera);
         return mCameras[mSelectedCamera];
+    }
+
+    const ref<Impostor>& Scene::getImpostor() const
+    {
+        FALCOR_CHECK(mSelectedImpostor < mImpostors.size(), "Selected Impostor index {} is invalid.", mSelectedImpostor);
+        return mImpostors[mSelectedImpostor];
     }
 
     void Scene::selectCamera(uint32_t index)
@@ -2377,6 +2396,11 @@ namespace Falcor
     {
         mCameraBounds = aabb;
         mpCamCtrl->setCameraBounds(aabb);
+    }
+    void Scene::addImpostor() {
+        ref<Impostor> imp = Impostor::create("imp0");
+        
+        mImpostors.push_back(imp);
     }
 
     void Scene::addViewpoint()
@@ -4320,6 +4344,7 @@ namespace Falcor
         scene.def_property_readonly(kStats.c_str(), [](const Scene* pScene) { return toPython(pScene->getSceneStats()); });
         scene.def_property_readonly(kBounds.c_str(), &Scene::getSceneBounds, pybind11::return_value_policy::copy);
         scene.def_property(kCamera.c_str(), &Scene::getCamera, &Scene::setCamera);
+        scene.def_property("impostor", &Scene::getImpostor, &Scene::setImpostor);
         scene.def_property(kEnvMap.c_str(), &Scene::getEnvMap, &Scene::setEnvMap);
         scene.def_property_readonly(kAnimations.c_str(), &Scene::getAnimations);
         scene.def_property_readonly(kCameras.c_str(), &Scene::getCameras);
@@ -4375,5 +4400,6 @@ namespace Falcor
         scene.def("get_mesh", &Scene::getMesh, "mesh_id"_a);
         scene.def("get_mesh_vertices_and_indices", getMeshVerticesAndIndicesPython, "mesh_id"_a, "buffers"_a);
         scene.def("set_mesh_vertices", setMeshVerticesPython, "mesh_id"_a, "buffers"_a);
+        scene.def("add_impostor", &Scene::addImpostor);
     }
 }

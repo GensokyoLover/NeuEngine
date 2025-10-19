@@ -49,12 +49,18 @@ struct VBufferRT
     static const bool kComputeDepthOfField = COMPUTE_DEPTH_OF_FIELD;
     static const bool kUseAlphaTest = USE_ALPHA_TEST;
     static const uint kRayFlags = RAY_FLAGS;
+    static const bool kMultiView = false;
 
     uint2 frameDim;
     uint frameCount;
 
     Ray generateRay(uint2 pixel)
     {
+        if (kMultiView){
+            return gScene.camera.computeRayMultiView(pixel, frameDim, false);
+        }
+        if (gScene.camera.data.focalLength == 0)
+            return gScene.camera.computeRayOrthographic(pixel, frameDim);
         if (kComputeDepthOfField)
         {
             SampleGenerator sg = SampleGenerator(pixel, frameCount);
@@ -65,6 +71,8 @@ struct VBufferRT
             return gScene.camera.computeRayPinhole(pixel, frameDim);
         }
     }
+
+
 
     void writeHit(uint2 pixel, float3 rayOrigin, float3 rayDir, const HitInfo hit)
     {
@@ -121,6 +129,8 @@ struct VBufferRT
             gMotionVector[pixel] = motionVector;
         if (is_valid(gMask))
             gMask[pixel] = 1.0f;
+        if (is_valid(gViewW))
+            gViewW[pixel] = float4(-rayDir, 0.f);
     }
 
     void writeMiss(uint2 pixel, float3 rayOrigin, float3 rayDir)
@@ -133,6 +143,8 @@ struct VBufferRT
             gMotionVector[pixel] = {};
         if (is_valid(gMask))
             gMask[pixel] = 0.0f;
+        if (is_valid(gViewW))
+            gViewW[pixel] = float4(-rayDir, 0.f);
     }
 
     void writeAux(uint2 pixel, const Ray ray)

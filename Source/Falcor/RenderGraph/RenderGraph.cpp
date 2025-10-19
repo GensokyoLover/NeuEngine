@@ -625,6 +625,7 @@ ref<Resource> RenderGraph::getOutput(const std::string& name)
     return mpExe->getResource(name);
 }
 
+
 ref<Resource> RenderGraph::getOutput(uint32_t index)
 {
     auto name = getOutputName(index);

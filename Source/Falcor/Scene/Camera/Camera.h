@@ -134,6 +134,8 @@ namespace Falcor
         /** Get the camera's world space up vector.
         */
         const float3& getUpVector() const {return mData.up;}
+        const int2& getAngularResolution() const { return mData.cameraResolution; }
+        const int2& getDirectionResolution() const { return mData.perViewResolution; }
 
         /** Get the camera's world space target position.
         */
@@ -146,6 +148,8 @@ namespace Falcor
         /** Set the camera's world space up vector.
         */
         void setUpVector(const float3& up) { mData.up = up; mDirty = true; }
+        void setAngularResolution(const int2& ar) const { mData.cameraResolution = ar; mDirty = true; }
+        void setDirectionResolution(const int2& dr) const { mData.perViewResolution = dr; mDirty = true; }
 
         /** Set the camera's world space target position.
         */
@@ -294,7 +298,7 @@ namespace Falcor
         mutable bool mEnablePersistentViewMat = false;
         mutable float4x4 mPersistentProjMat;
         mutable float4x4 mPersistentViewMat;
-
+        
         std::string mName;
         bool mPreserveHeight = true;    ///< If true, preserve frame height on change of aspect ratio. Otherwise, preserve width.
 

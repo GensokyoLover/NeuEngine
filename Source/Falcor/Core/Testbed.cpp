@@ -54,9 +54,13 @@ Testbed::~Testbed()
 void Testbed::run()
 {
     mShouldInterrupt = false;
+    int accumulate_spp = 0;
 
-    while ((!mpWindow || !mpWindow->shouldClose()) && !mShouldInterrupt)
+    while ((!mpWindow || !mpWindow->shouldClose()) && !mShouldInterrupt && accumulate_spp < spp) {
         frame();
+        accumulate_spp = accumulate_spp + 1;
+
+    }
 }
 
 void Testbed::interrupt()
@@ -137,6 +141,8 @@ void Testbed::frame()
     }
 
     mpDevice->endFrame();
+
+
 }
 
 void Testbed::resizeFrameBuffer(uint32_t width, uint32_t height)
@@ -160,7 +166,7 @@ void Testbed::loadScene(const std::filesystem::path& path, SceneBuilder::Flags b
 
     if (mpRenderGraph)
         mpRenderGraph->setScene(mpScene);
-}
+}   
 
 void Testbed::loadSceneFromString(const std::string& scene, const std::string extension, SceneBuilder::Flags buildFlags)
 {
@@ -332,6 +338,7 @@ void Testbed::internalInit(const Options& options)
     mUI.showFPS = options.showFPS;
 
     mFrameRate.reset();
+    spp = options.spp;
 }
 
 void Testbed::internalShutdown()
@@ -604,8 +611,8 @@ void Testbed::captureOutput(const std::filesystem::path& path, uint32_t outputIn
         auto ext = Bitmap::getFileExtFromResourceFormat(pTex->getFormat());
         auto fileformat = Bitmap::getFormatFromFileExtension(ext);
         Bitmap::ExportFlags flags = Bitmap::ExportFlags::None;
-        if (mask == TextureChannelFlags::RGBA)
-            flags |= Bitmap::ExportFlags::ExportAlpha;
+     
+        flags |= Bitmap::ExportFlags::ExportAlpha;
 
         pTex->captureToFile(0, 0, path, fileformat, flags, false /* async */);
     }
@@ -705,15 +712,16 @@ FALCOR_SCRIPT_BINDING(Testbed)
     testbed.def(
         pybind11::init(
             [](uint32_t width,
-               uint32_t height,
-               bool create_window,
-               Device::Type device_type,
-               uint32_t gpu,
-               bool enable_debug_layers,
-               bool enable_aftermath,
-               const std::string& title,
-               bool show_fps,
-               ref<Device> device)
+                uint32_t height,
+                bool create_window,
+                Device::Type device_type,
+                uint32_t gpu,
+                bool enable_debug_layers,
+                bool enable_aftermath,
+                const std::string& title,
+                bool show_fps,
+                ref<Device> device,
+                int spp)
             {
                 Testbed::Options options;
                 options.pDevice = device;
@@ -726,6 +734,7 @@ FALCOR_SCRIPT_BINDING(Testbed)
                 options.deviceDesc.enableDebugLayer = enable_debug_layers;
                 options.deviceDesc.enableAftermath = enable_aftermath;
                 options.showFPS = show_fps;
+                options.spp = spp;
                 return Testbed::create(options);
             }
         ),
@@ -738,7 +747,8 @@ FALCOR_SCRIPT_BINDING(Testbed)
         "enable_aftermath"_a = false,
         "title"_a = "Falcor Sample",
         "show_fps"_a = true,
-        "device"_a = nullptr
+        "device"_a = nullptr,
+        "spp"_a = 16
     );
     testbed.def("run", &Testbed::run);
     testbed.def("frame", &Testbed::frame);

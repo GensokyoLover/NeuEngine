@@ -65,7 +65,9 @@ struct CameraData
     float    shutterSpeed           = 0.004f;                   ///< Camera shutter speed in seconds.
     float    ISOSpeed               = 100.0f;                   ///< Camera film speed based on ISO standards.
     float   _padding1;
-    float   _padding2;
+    float _padding2;
+    int2 perViewResolution = int2(256, 256);
+    int2 cameraResolution = int2(16,16);
 };
 
 END_NAMESPACE_FALCOR

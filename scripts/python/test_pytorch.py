@@ -1,4 +1,8 @@
 import torch
+import os
+import sys
+os.environ["PATH"]      = r"H:/Falcor\build\windows-vs2022\bin\Debug" + os.environ["PATH"]
+sys.path.append( r"H:/Falcor\build\windows-vs2022\bin\Debug/python")
 import falcor
 import random
 
@@ -58,7 +62,8 @@ def test_tensor_from_falcor(test_pass, iterations=10):
 
 def main():
     random.seed(1)
-
+    device = falcor.Device(type=falcor.DeviceType.Vulkan, gpu=0, enable_debug_layer=False)
+    testbed = falcor.Testbed(width=4096, height=4096, create_window=False, device=device,spp=16)
     # Create torch CUDA device
     print("Creating CUDA device")
     if not torch.cuda.is_available():
@@ -68,8 +73,8 @@ def main():
     torch.set_default_tensor_type(torch.cuda.FloatTensor)
 
     # Create testbed
-    testbed = falcor.Testbed()
     render_graph = testbed.create_render_graph("TestPybind")
+    testbed = falcor.Testbed()
     test_pass = render_graph.create_pass(
         "test_pybind_pass", "TestPyTorchPass", {}
     )

@@ -30,6 +30,7 @@
 #include "Core/Object.h"
 #include "Core/Program/Program.h"
 #include "Core/API/Raytracing.h"
+#include "Impostor/Impostor.h"
 
 #include <sigs/sigs.h>
 
@@ -180,6 +181,7 @@ public:
     virtual const std::vector<ref<Light>>& getActiveAnalyticLights() const = 0;
 
     virtual const ref<Camera>& getCamera() const = 0;
+    virtual const ref<Impostor>& getImpostor() const = 0;
 
     /// Used to get type conformances for materials.
     virtual const MaterialSystem& getMaterialSystem() const = 0;

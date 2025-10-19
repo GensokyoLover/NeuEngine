@@ -42,7 +42,10 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-
+#include "Utils/Scripting/ndarray.h"
+#if FALCOR_HAS_CUDA
+#include "Utils/CudaUtils.h"
+#endif
 namespace Falcor
 {
 /**
@@ -52,7 +55,18 @@ namespace Falcor
 class FALCOR_API RenderGraph : public Object
 {
     FALCOR_OBJECT(RenderGraph)
+        using PyTorchTensor = pybind11::ndarray<pybind11::pytorch, float>;
 public:
+    /// GPU buffer for generated data.
+    ref<Resource> mpBuffer;
+    ref<Texture> mpTexture;
+
+#if FALCOR_HAS_CUDA
+    /// Shared CUDA/Falcor buffer for passing data from Falcor to PyTorch asynchronously.
+    InteropBuffer mSharedWriteBuffer;
+    /// Shared CUDA/Falcor buffer for passing data from PyTorch to Falcor asynchronously.
+    InteropBuffer mSharedReadBuffer;
+#endif
     static const FileDialogFilterVec kFileExtensionFilters;
     static constexpr uint32_t kInvalidIndex = -1;
 
@@ -187,6 +201,7 @@ public:
      * @return Resource object, or nullptr if output not available.
      */
     ref<Resource> getOutput(uint32_t index);
+
 
     /**
      * Mark a render pass output as the graph's output.

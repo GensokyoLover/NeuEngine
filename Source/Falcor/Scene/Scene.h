@@ -48,6 +48,7 @@
 #include "Core/Object.h"
 #include "Core/API/VAO.h"
 #include "Core/API/RtAccelerationStructure.h"
+#include "Impostor/Impostor.h"
 #include "Utils/Math/AABB.h"
 #include "Utils/Math/Rectangle.h"
 #include "Utils/Math/Vector.h"
@@ -482,6 +483,7 @@ namespace Falcor
         /** Access the scene's currently selected camera to change properties or to use elsewhere.
         */
         const ref<Camera>& getCamera() const override;
+        const ref<Impostor>& getImpostor() const override;
 
         /** Get the camera bounds
         */
@@ -490,14 +492,17 @@ namespace Falcor
         /** Set the camera bounds
         */
         void setCameraBounds(const AABB& aabb);
+        void addImpostor();
 
         /** Get a list of all cameras in the scene.
         */
         const std::vector<ref<Camera>>& getCameras() { return mCameras; };
+        const std::vector<ref<Impostor>>& getImpostors() { return mImpostors; };
 
         /** Select a different camera to use. The camera must already exist in the scene.
         */
         void setCamera(const ref<Camera>& pCamera);
+        void setImpostor(const ref<Impostor>& pImpostor);
 
         /** Set the currently selected camera's aspect ratio.
         */
@@ -1272,6 +1277,7 @@ namespace Falcor
         } mDisplacement;
 
         // Curves
+        // Curves
         std::vector<CurveDesc> mCurveDesc;                          ///< Copy of curve data GPU buffer (mpCurvesBuffer).
         std::vector<uint32_t> mCurveIndexData;                      ///< Vertex indices for all curves in 32-bit.
         std::vector<StaticCurveVertexData> mCurveStaticData;        ///< Vertex attributes for all curves.
@@ -1336,7 +1342,9 @@ namespace Falcor
         CameraControllerType mCamCtrlType = CameraControllerType::FirstPerson;
         std::unique_ptr<CameraController> mpCamCtrl;
         std::vector<ref<Camera>> mCameras;
+        
         uint32_t mSelectedCamera = 0;
+        uint32_t mSelectedImpostor = 0;
         float mCameraSpeed = 1.0f;
         bool mCameraSwitched = false;
         bool mCameraControlsEnabled = true;
@@ -1446,7 +1454,7 @@ namespace Falcor
         {
             return mMeshStaticData;
         }
-
+        std::vector<ref<Impostor>> mImpostors;
         const SplitVertexBuffer& getMeshStaticData() const
         {
             return mMeshStaticData;

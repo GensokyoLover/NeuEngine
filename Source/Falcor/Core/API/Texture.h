@@ -186,6 +186,7 @@ public:
      * @param[in] importFlags Optional flags for the file import.
      * @return A new texture, or nullptr if the texture failed to load.
      */
+
     static ref<Texture> createFromFile(
         ref<Device> pDevice,
         const std::filesystem::path& path,
@@ -193,6 +194,15 @@ public:
         bool loadAsSrgb,
         ResourceBindFlags bindFlags = ResourceBindFlags::ShaderResource,
         Bitmap::ImportFlags importFlags = Bitmap::ImportFlags::None
+    );
+    static ref<Texture> createFromFolder(
+        ref<Device> pDevice,
+        const std::filesystem::path& path,
+        bool generateMipLevels,
+        bool loadAsSrgb,
+        ResourceBindFlags bindFlags = ResourceBindFlags::ShaderResource,
+        Bitmap::ImportFlags importFlags = Bitmap::ImportFlags::None,
+        std::string prefix = "prefix"
     );
 
     gfx::ITextureResource* getGfxTextureResource() const { return mGfxTextureResource; }

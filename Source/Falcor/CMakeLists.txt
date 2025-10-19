@@ -379,6 +379,11 @@ target_sources(Falcor PRIVATE
     Scene/Camera/Camera.slang
     Scene/Camera/CameraData.slang
 
+
+   Scene/Impostor/Impostor.cpp
+    Scene/Impostor/Impostor.h
+    Scene/Impostor/Impostor.slang 
+
     Scene/Curves/CurveConfig.h
     Scene/Curves/CurveTessellation.cpp
     Scene/Curves/CurveTessellation.h

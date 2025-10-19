@@ -63,7 +63,7 @@ import Utils.Math.MathHelpers;
 import Utils.Geometry.GeometryHelpers;
 import Utils.Sampling.SampleGenerator;
 import Rendering.Lights.LightHelpers;
-
+import Scene.Impostor.Impostor;
 cbuffer CB
 {
     uint gFrameCount;    // Frame count since scene was loaded.
@@ -82,7 +82,7 @@ RWTexture2D<float4> gSpecular;
 RWTexture2D<float4> gNormal;
 RWTexture2D<float> gRoughness;
 RWTexture2D<float> gDepth;
-
+Impostor gImpostor;
 // Static configuration based on defines set from the host.
 #define is_valid(name) (is_valid_##name != 0)
 static const uint kMaxBounces = MAX_BOUNCES;
@@ -389,17 +389,6 @@ void handleHit(const HitInfo hit, inout ScatterRayData rayData)
  * @param[in] frameDim Dimension of the frame in pixels.
  * @return Returns the estimated color (radiance).
  */
-
-float3 hash3(uint n)
-{
-    // 类似 GLSL 的黄金比例 hash
-    n = (n << 13u) ^ n;
-    float x = frac((n * 0.1031));
-    float y = frac((n * 0.11369));
-    float z = frac((n * 0.13787));
-    return float3(x, y, z);
-}
-
 float3 tracePath(const uint2 pixel, const uint2 frameDim)
 {
     float3 outColor = float3(0.f);
@@ -463,21 +452,13 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim)
             rayData.terminated = true;
         BSDFProperties brdf = mi.getProperties(sd);
         gPosition[pixel] = float4(sd.posW, 1.f);
-        uint3 gridDim = uint3(16, 16, 16);
-        uint3 pos = uint3((sd.posW + 1) / 2 * 16) ; // 映射到 [-1,1]^3
-        float3 color = hash3(pos.x * 16 * 16 + pos.y * 16 + pos.z ); // 自定义 hash 函数
-        // gPosition[pixel] = float4(gScene.camera.data.cameraV, 1.f);
-        //  Follow path into the scene and compute its total contribution.
-        gAlbedo[DispatchRaysIndex().xy] = float4(impostor, 1.f);
-        //gAlbedo[DispatchRaysIndex().xy] = float4(primaryRayOrigin,1);
         gSpecular[DispatchRaysIndex().xy] = float4(brdf.specularReflectionAlbedo, 1.f);
         //gSpecular[DispatchRaysIndex().xy] = float4(primaryRayDir, 1.f);
         float depth = length(sd.posW - primaryRayOrigin);
         gNormal[DispatchRaysIndex().xy] = float4(brdf.guideNormal, 1.f);
-        //gNormal[DispatchRaysIndex().xy] = float4( gScene.camera.data.cameraU, 1.f);
-        //gNormal[DispatchRaysIndex().xy] = float4(-primaryRayDir, 1.f);
         gRoughness[DispatchRaysIndex().xy] = brdf.roughness;
         gDepth[DispatchRaysIndex().xy] = depth;
+        gAlbedo[DispatchRaysIndex().xy] = float4(float3(gImpostor.texFaceIndex.Sample(gImpostor.samplerLinear,float3((0.5 + pixel.x)/2048,(0.5 + pixel.y)/2048,0))),1);
         //gDepth[DispatchRaysIndex().xy] = gScene.camera.data.frameWidth;
         for (uint depth = 0; depth <= kMaxBounces && !rayData.terminated; depth++)
         {
@@ -496,14 +477,15 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim)
         gPosition[DispatchRaysIndex().xy] = float4(0);
         // Follow path into the scene and compute its total contribution.
         gAlbedo[DispatchRaysIndex().xy] = float4(0);
+        //gAlbedo[DispatchRaysIndex().xy] = gImpostor.sample(0, (float2(pixel) + 0.5) / float2(frameDim));
         gSpecular[DispatchRaysIndex().xy] = float4(0);
+        gAlbedo[DispatchRaysIndex().xy] = gImpostor.texAlbedo.Sample(gImpostor.samplerLinear, float3(0, (float2(pixel) + 0.5) / float2(frameDim)));
         gNormal[DispatchRaysIndex().xy] = float4(0);
-        // gSpecular[DispatchRaysIndex().xy] = float4(brdf.specularReflectionAlbedo, 1.f);
-        // gSpecular[DispatchRaysIndex().xy] = float4(primaryRayOrigin, 1.f);
         // // gNormal[DispatchRaysIndex().xy] = float4(brdf.guideNormal, 1.f);
         // gNormal[DispatchRaysIndex().xy] = float4(-primaryRayDir, 1.f);
         gRoughness[DispatchRaysIndex().xy] = 0;
         gDepth[DispatchRaysIndex().xy] = 0;
+        gAlbedo[DispatchRaysIndex().xy] = float4( float3(gImpostor.texFaceIndex.Sample(gImpostor.samplerLinear, float3((0.5 + pixel.x) / 2048, (0.5 + pixel.y) / 2048, 0))), 1 );
     }
 
     return outColor;

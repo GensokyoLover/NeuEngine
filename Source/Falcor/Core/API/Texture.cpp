@@ -28,6 +28,7 @@
 #include "Texture.h"
 #include "Device.h"
 #include "Formats.h"
+
 #include "RenderContext.h"
 #include "GFXHelpers.h"
 #include "GFXAPI.h"
@@ -431,6 +432,122 @@ ref<Texture> Texture::createFromFile(
     return pTex;
 }
 
+
+ref<Texture> Texture::createFromFolder(
+    ref<Device> pDevice,
+    const std::filesystem::path& folder,
+    bool generateMipLevels,
+    bool loadAsSrgb,
+    ResourceBindFlags bindFlags,
+    Bitmap::ImportFlags importFlags,
+    std::string prefix
+)
+{
+    if (!std::filesystem::exists(folder) || !std::filesystem::is_directory(folder))
+    {
+        logWarning("Texture::createArrayFromFolder() - '{}' is not a valid directory.", folder);
+        return nullptr;
+    }
+
+    // 1️⃣ 收集所有图片路径
+    std::vector<std::filesystem::path> imagePaths;
+    for (auto& entry : std::filesystem::directory_iterator(folder))
+    {
+        if (!entry.is_regular_file()) continue;
+        auto path = entry.path();
+        auto ext = entry.path().extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" || ext == ".exr" || ext == ".hdr")
+        {
+            auto filename = path.filename().string();
+            if (filename.rfind(prefix, 0) == 0)  // 从头匹配前缀
+            {
+                imagePaths.push_back(entry.path());
+            }
+        }
+    }
+
+    if (imagePaths.empty())
+    {
+        logWarning("Texture::createArrayFromFolder() - No valid images found in '{}'.", folder);
+        return nullptr;
+    }
+
+    // 按文件名排序，确保 array 顺序一致
+    std::sort(imagePaths.begin(), imagePaths.end(),
+        [](const auto& a, const auto& b) { return a.filename().string() < b.filename().string(); });
+
+    // 2️⃣ 先读取第一张，确定尺寸和格式
+    Bitmap::UniqueConstPtr pFirstBmp = Bitmap::createFromFile(imagePaths[0], kTopDown, importFlags);
+    if (!pFirstBmp)
+    {
+        logWarning("Texture::createArrayFromFolder() - Failed to load first image '{}'.", imagePaths[0]);
+        return nullptr;
+    }
+
+    uint32_t width = pFirstBmp->getWidth();
+    uint32_t height = pFirstBmp->getHeight();
+    ResourceFormat texFormat = pFirstBmp->getFormat();
+    if (loadAsSrgb) texFormat = linearToSrgbFormat(texFormat);
+
+    uint32_t arraySize = (uint32_t)imagePaths.size();
+
+    // 3️⃣ 创建 Texture2D (array)
+    ref<Texture> pTexArray = pDevice->createTexture2D(
+        width,
+        height,
+        texFormat,
+        arraySize,
+        1,
+        nullptr, // 暂不填充数据
+        bindFlags
+    );
+
+    // 4️⃣ 上传每张图的数据
+    for (uint32_t i = 0; i < arraySize; i++)
+    {
+        Bitmap::UniqueConstPtr pBmp = Bitmap::createFromFile(imagePaths[i], kTopDown, importFlags);
+        
+        if (!pBmp)
+        {
+            logWarning("Texture::createArrayFromFolder() - Failed to load image '{}'.", imagePaths[i]);
+            continue;
+        }
+
+        if (pBmp->getWidth() != width || pBmp->getHeight() != height)
+        {
+            logWarning("Texture::createArrayFromFolder() - Image '{}' size mismatch ({}x{} vs {}x{}), skipping.",
+                imagePaths[i].filename().string(), pBmp->getWidth(), pBmp->getHeight(), width, height);
+            continue;
+        }
+        ref<Texture> tex = pDevice->createTexture2D(
+            pBmp->getWidth(),
+            pBmp->getHeight(),
+            texFormat,
+            1,
+            generateMipLevels ? Texture::kMaxPossible : 1,
+            pBmp->getData(),
+            bindFlags
+        );
+        // 上传到 array slice
+        uint3 offset = uint3(0);
+        uint3 sz = uint3(-1);
+        pDevice->getRenderContext()->copySubresourceRegion(
+            pTexArray.get(), i,
+         tex.get(),0, offset, offset, sz
+        );
+    }
+
+    // 5️⃣ 记录路径信息（用于 debug）
+    pTexArray->setSourcePath(folder);
+    pTexArray->mImportFlags = importFlags;
+
+    logInfo("Loaded TextureArray from '{}', {} layers ({}x{}, format={}).",
+        folder.string(), arraySize, width, height, to_string(texFormat));
+
+    return pTexArray;
+}
+
 gfx::IResource* Texture::getGfxResource() const
 {
     return mGfxTextureResource;
@@ -592,6 +709,7 @@ void Texture::captureToFile(
     bool async
 )
 {
+    async = false;
     if (format == Bitmap::FileFormat::DdsFile)
     {
         FALCOR_THROW("Texture::captureToFile does not yet support saving to DDS.");

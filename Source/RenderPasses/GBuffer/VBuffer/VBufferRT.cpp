@@ -187,6 +187,7 @@ void VBufferRT::recreatePrograms()
 
 void VBufferRT::executeRaytrace(RenderContext* pRenderContext, const RenderData& renderData)
 {
+    //std::cout << "rt" << std::endl;
     if (!mRaytrace.pProgram || !mRaytrace.pVars)
     {
         DefineList defines;
@@ -254,6 +255,7 @@ void VBufferRT::executeRaytrace(RenderContext* pRenderContext, const RenderData&
 void VBufferRT::executeCompute(RenderContext* pRenderContext, const RenderData& renderData)
 {
     // Create compute pass.
+    std::cout << "compute" << std::endl;
     if (!mpComputePass)
     {
         ProgramDesc desc;
