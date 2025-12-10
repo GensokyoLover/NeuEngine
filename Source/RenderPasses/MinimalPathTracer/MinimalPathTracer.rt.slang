@@ -81,7 +81,10 @@ RWTexture2D<float4> gAlbedo;
 RWTexture2D<float4> gSpecular;
 RWTexture2D<float4> gNormal;
 RWTexture2D<float> gRoughness;
-RWTexture2D<float> gDepth;
+RWTexture2D<float4> gDepth;
+RWTexture2D<float4> gEmissive;
+RWTexture2D<float4> gView;
+RWTexture2D<float4> gRayPos;
 
 // Static configuration based on defines set from the host.
 #define is_valid(name) (is_valid_##name != 0)
@@ -412,6 +415,12 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim)
     const float3 primaryRayDir = fake_ray.dir;
 
     const HitInfo hit = HitInfo(gVBuffer[pixel]);
+    if (gFrameCount == 0) {
+        gDepth[pixel].r = 10;
+        gDepth[pixel].g = -10;
+    }
+    gView[DispatchRaysIndex().xy] = float4(-primaryRayDir, 1);
+    gRayPos[DispatchRaysIndex().xy] = float4(primaryRayOrigin, 1);
     if (hit.isValid())
     {
         // Pixel represents a valid primary hit. Compute its contribution.
@@ -468,8 +477,10 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim)
         float3 color = hash3(pos.x * 16 * 16 + pos.y * 16 + pos.z ); // 自定义 hash 函数
         // gPosition[pixel] = float4(gScene.camera.data.cameraV, 1.f);
         //  Follow path into the scene and compute its total contribution.
-        gAlbedo[DispatchRaysIndex().xy] = float4(impostor, 1.f);
-        //gAlbedo[DispatchRaysIndex().xy] = float4(primaryRayOrigin,1);
+        // gAlbedo[DispatchRaysIndex().xy] = float4(color, 1.f);
+
+        gAlbedo[DispatchRaysIndex().xy] = float4(brdf.diffuseReflectionAlbedo,1);
+        gEmissive[DispatchRaysIndex().xy] = float4(brdf.emission, 1.f);
         gSpecular[DispatchRaysIndex().xy] = float4(brdf.specularReflectionAlbedo, 1.f);
         //gSpecular[DispatchRaysIndex().xy] = float4(primaryRayDir, 1.f);
         float depth = length(sd.posW - primaryRayOrigin);
@@ -477,7 +488,9 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim)
         //gNormal[DispatchRaysIndex().xy] = float4( gScene.camera.data.cameraU, 1.f);
         //gNormal[DispatchRaysIndex().xy] = float4(-primaryRayDir, 1.f);
         gRoughness[DispatchRaysIndex().xy] = brdf.roughness;
-        gDepth[DispatchRaysIndex().xy] = depth;
+
+        gDepth[DispatchRaysIndex().xy].r = min(depth, gDepth[DispatchRaysIndex().xy].r);
+        gDepth[DispatchRaysIndex().xy].g = max(depth, gDepth[DispatchRaysIndex().xy].g);
         //gDepth[DispatchRaysIndex().xy] = gScene.camera.data.frameWidth;
         for (uint depth = 0; depth <= kMaxBounces && !rayData.terminated; depth++)
         {
@@ -503,7 +516,7 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim)
         // // gNormal[DispatchRaysIndex().xy] = float4(brdf.guideNormal, 1.f);
         // gNormal[DispatchRaysIndex().xy] = float4(-primaryRayDir, 1.f);
         gRoughness[DispatchRaysIndex().xy] = 0;
-        gDepth[DispatchRaysIndex().xy] = 0;
+    
     }
 
     return outColor;

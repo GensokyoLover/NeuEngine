@@ -31,3 +31,17 @@
 *.tlog
 *.bak
 *.swp
+/AccumulatePassoutput_0.exr
+/albedo_0.exr
+/color_0.exr
+/depth_0.exr
+/image8x512
+/lookup.exr
+/lookup_uint.png
+/lookup_uint16.png
+/normal_0.exr
+/position_0.exr
+/roughness_0.exr
+/scripts
+/Source
+/specular_0.exr

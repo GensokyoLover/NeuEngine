@@ -60,7 +60,10 @@ const ChannelList kOutputChannels = {
     { "specular",          "gSpecular", "Output color (sum of direct and indirect)", false, ResourceFormat::RGBA32Float },
     { "normal",          "gNormal", "Output color (sum of direct and indirect)", false, ResourceFormat::RGBA32Float },
     { "roughness",          "gRoughness", "Output color (sum of direct and indirect)", false, ResourceFormat::R32Float },
-    { "depth",          "gDepth", "Output color (sum of direct and indirect)", false, ResourceFormat::R32Float }
+    { "depth",          "gDepth", "Output color (sum of direct and indirect)", false, ResourceFormat::RGBA32Float },
+    { "emission",          "gEmissive", "Output color (sum of direct and indirect)", false, ResourceFormat::RGBA32Float },
+    { "view",          "gView", "Output color (sum of direct and indirect)", false, ResourceFormat::RGBA32Float },
+    { "raypos",          "gRayPos", "Output color (sum of direct and indirect)", false, ResourceFormat::RGBA32Float }
    // { "fresenel",          "gFresnel", "Output color (sum of direct and indirect)", false, ResourceFormat::R32Float },
     // clang-format on
 };
@@ -106,7 +109,7 @@ Properties MinimalPathTracer::getProperties() const
 RenderPassReflection MinimalPathTracer::reflect(const CompileData& compileData)
 {
     RenderPassReflection reflector;
-
+    
     // Define our input/output channels.
     addRenderPassInputs(reflector, kInputChannels);
     addRenderPassOutputs(reflector, kOutputChannels);
@@ -118,6 +121,7 @@ void MinimalPathTracer::execute(RenderContext* pRenderContext, const RenderData&
 {
     // Update refresh flag if options that affect the output have changed.
     auto& dict = renderData.getDictionary();
+    
     if (mOptionsChanged)
     {
         auto flags = dict.getValue(kRenderPassRefreshFlags, RenderPassRefreshFlags::None);
@@ -179,7 +183,7 @@ void MinimalPathTracer::execute(RenderContext* pRenderContext, const RenderData&
 
     // Set constants.
     auto var = mTracer.pVars->getRootVar();
-    var["CB"]["gFrameCount"] = mFrameCount;
+    var["CB"]["gFrameCount"] = pRenderContext->gframeCount;
     var["CB"]["gPRNGDimension"] = dict.keyExists(kRenderPassPRNGDimension) ? dict[kRenderPassPRNGDimension] : 0u;
 
     // Bind I/O buffers. These needs to be done per-frame as the buffers may change anytime.

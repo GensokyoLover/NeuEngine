@@ -33,7 +33,8 @@
 namespace
 {
 const std::string kProgramRaytraceFile = "RenderPasses/GBuffer/VBuffer/VBufferRT.rt.slang";
-const std::string kProgramComputeFile = "RenderPasses/GBuffer/VBuffer/VBufferRT.cs.slang";
+//const std::string kProgramComputeFile = "RenderPasses/GBuffer/VBuffer/VBufferRT.cs.slang";
+const std::string kProgramComputeFile = "RenderPasses/GBuffer/VBuffer/ImpostorRT.cs.slang";
 
 // Scripting options.
 const char kUseTraceRayInline[] = "useTraceRayInline";
@@ -55,7 +56,20 @@ const ChannelList kVBufferExtraChannels = {
     { "viewW",          "gViewW",           "View direction in world space",    true /* optional */, ResourceFormat::RGBA32Float }, // TODO: Switch to packed 2x16-bit snorm format.
     { "time",           "gTime",            "Per-pixel execution time",         true /* optional */, ResourceFormat::R32Uint     },
     { "mask",           "gMask",            "Mask",                             true /* optional */, ResourceFormat::R32Float    },
-    // clang-format on
+    { "position",           "gPosition",            "Positoin",                             true /* optional */, ResourceFormat::RGBA32Float    },
+    { "albedo",           "gAlbedo",            "Albedo",                             true /* optional */, ResourceFormat::RGBA32Float    },
+    { "albedo0",           "gAlbedo0",            "Albedo0",                             true /* optional */, ResourceFormat::RGBA32Float    },
+    { "albedo1",           "gAlbedo1",            "Albedo1",                             true /* optional */, ResourceFormat::RGBA32Float    },
+    { "albedo2",           "gAlbedo2",            "Albedo2",                             true /* optional */, ResourceFormat::RGBA32Float    },
+    { "wdepth",           "gWdepth",            "Wdepth",                             true /* optional */, ResourceFormat::RGBA32Float    },
+    { "depth0",           "gDepth0",            "Depth0",                             true /* optional */, ResourceFormat::RGBA32Float    },
+    { "depth1",           "gDepth1",            "Depth1",                             true /* optional */, ResourceFormat::RGBA32Float    },
+    { "depth2",           "gDepth2",            "Depth2",                             true /* optional */, ResourceFormat::RGBA32Float    },
+    { "referencealbedo",           "gReferenceAlbedo",            "Referencealbedo",                             true /* optional */, ResourceFormat::RGBA32Float    },
+    { "referencedepth",           "gReferenceDepth",            "Referencedepth",                             true /* optional */, ResourceFormat::RGBA32Float    },
+    { "debug",           "gDebug",            "Debug",                             true /* optional */, ResourceFormat::RGBA32Float    },
+   
+    
 };
 }; // namespace
 
@@ -116,6 +130,7 @@ void VBufferRT::execute(RenderContext* pRenderContext, const RenderData& renderD
         }
 
         mUseTraceRayInline ? executeCompute(pRenderContext, renderData) : executeRaytrace(pRenderContext, renderData);
+        //executeCompute(pRenderContext, renderData);
         mUpdateFlags = IScene::UpdateFlags::None;
         mFrameCount++;
     }
@@ -255,7 +270,7 @@ void VBufferRT::executeRaytrace(RenderContext* pRenderContext, const RenderData&
 void VBufferRT::executeCompute(RenderContext* pRenderContext, const RenderData& renderData)
 {
     // Create compute pass.
-    std::cout << "compute" << std::endl;
+    //std::cout << "compute" << std::endl;
     if (!mpComputePass)
     {
         ProgramDesc desc;
@@ -270,15 +285,16 @@ void VBufferRT::executeCompute(RenderContext* pRenderContext, const RenderData& 
 
         mpComputePass = ComputePass::create(mpDevice, desc, defines, true);
 
-        // Bind static resources
-        ShaderVar var = mpComputePass->getRootVar();
-        mpScene->bindShaderDataForRaytracing(pRenderContext, var["gScene"]);
-        mpSampleGenerator->bindShaderData(var);
+        
     }
 
-    mpComputePass->getProgram()->addDefines(getShaderDefines(renderData));
-
+    // Bind static resources
     ShaderVar var = mpComputePass->getRootVar();
+    mpScene->bindShaderDataForRaytracing(pRenderContext, var["gScene"]);
+    mpSampleGenerator->bindShaderData(var);
+    auto impostor = mpScene->getImpostor();
+    impostor->bindShaderData(var["gVBufferRT"]["gImpostor"]);
+    mpComputePass->getProgram()->addDefines(getShaderDefines(renderData));
     bindShaderData(var, renderData);
 
     mpComputePass->execute(pRenderContext, uint3(mFrameDim, 1));

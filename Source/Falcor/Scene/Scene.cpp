@@ -29,6 +29,7 @@
 #include "SceneDefines.slangh"
 #include "SceneBuilder.h"
 #include "Importer.h"
+#include "Scene/Material/Material.h"
 #include "Scene/Material/SerializedMaterialParams.h"
 #include "Curves/CurveConfig.h"
 #include "SDFs/SDFGrid.h"
@@ -1894,6 +1895,7 @@ namespace Falcor
         mUpdates |= updateGeometry(pRenderContext, false);
         mUpdates |= updateSDFGrids(pRenderContext);
         pRenderContext->submit();
+        
 
         if (is_set(mUpdates, IScene::UpdateFlags::GeometryMoved))
         {
@@ -2402,7 +2404,9 @@ namespace Falcor
         
         mImpostors.push_back(imp);
     }
-
+    void Scene::addVideoTexture(std::string path) {
+        videoTexture = Texture::createFromFolder(mpDevice, path, false, false, ResourceBindFlags::ShaderResource, Bitmap::ImportFlags::None,"frame");
+    }
     void Scene::addViewpoint()
     {
         auto camera = getCamera();
@@ -2679,7 +2683,12 @@ namespace Falcor
             mCustomPrimitivesMoved = true;
         }
     }
-
+    void Scene::setMaterialSlotByTexturePath(const std::string& name, const std::string& path, const std::string& slot_name) {
+        ref<Material> mat = mpMaterials->getMaterialByName(name);
+        ref<Texture> tex = Texture::createFromFile(mpDevice, path, false, false);
+        if(slot_name == "Emissive")
+            mat->setTexture(Material::TextureSlot::Emissive, tex);
+    }
     ref<GridVolume> Scene::getGridVolumeByName(const std::string& name) const
     {
         for (const auto& v : mGridVolumes)
@@ -4070,13 +4079,201 @@ namespace Falcor
         return c;
     }
 
+
     void Scene::updateNodeTransform(uint32_t nodeID, const float4x4& transform)
     {
         FALCOR_ASSERT(nodeID < mSceneGraph.size());
 
         Node& node = mSceneGraph[nodeID];
+        for (int i = 0; i < 4; i++)
+        {
+            for (int j = 0; j < 4; j++)
+            {
+                printf("%f ",transform[i][j]);
+            }
+        }
         node.transform = validateTransformMatrix(transform);
         mpAnimationController->setNodeEdited(nodeID);
+    }
+
+    void Scene::updateNodeTransformPy(uint32_t nodeID, float3 scale, float3 translation, float3 rotationXYZ)
+    {
+        // 按你习惯的顺序组合矩阵：
+        // 一般是 T * S（先缩放再平移）
+        float4x4 S;
+        float rx = rotationXYZ.x;   // rotation around X
+        float ry = rotationXYZ.y;   // rotation around Y
+        float rz = rotationXYZ.z;   // rotation around Z
+
+        float cx = cos(rx), sx = sin(rx);
+        float cy = cos(ry), sy = sin(ry);
+        float cz = cos(rz), sz = sin(rz);
+        S[0][0] = scale.x; S[0][1] = 0;       S[0][2] = 0;       S[0][3] = 0;
+        S[1][0] = 0;       S[1][1] = scale.y; S[1][2] = 0;       S[1][3] = 0;
+        S[2][0] = 0;       S[2][1] = 0;       S[2][2] = scale.z; S[2][3] = 0;
+        S[3][0] = 0;       S[3][1] = 0;       S[3][2] = 0;       S[3][3] = 1;
+        
+        // ---- 构建平移矩阵 T ----
+        float4x4 T;
+        T[0][0] = 1; T[0][1] = 0; T[0][2] = 0; T[0][3] = 0;
+        T[1][0] = 0; T[1][1] = 1; T[1][2] = 0; T[1][3] = 0;
+        T[2][0] = 0; T[2][1] = 0; T[2][2] = 1; T[2][3] = 0;
+        T[3][0] = translation.x;
+        T[3][1] = translation.y;
+        T[3][2] = translation.z;
+        T[3][3] = 1;
+        float4x4 Rz;
+        Rz[0][0] = cz; Rz[0][1] = -sz; Rz[0][2] = 0;  Rz[0][3] = 0;
+        Rz[1][0] = sz; Rz[1][1] = cz; Rz[1][2] = 0;  Rz[1][3] = 0;
+        Rz[2][0] = 0;  Rz[2][1] = 0;   Rz[2][2] = 1;  Rz[2][3] = 0;
+        Rz[3][0] = 0;  Rz[3][1] = 0;   Rz[3][2] = 0;  Rz[3][3] = 1;
+
+        // ---- Rotation Y ----
+        float4x4 Ry;
+        Ry[0][0] = cy;  Ry[0][1] = 0; Ry[0][2] = sy;  Ry[0][3] = 0;
+        Ry[1][0] = 0;   Ry[1][1] = 1; Ry[1][2] = 0;   Ry[1][3] = 0;
+        Ry[2][0] = -sy; Ry[2][1] = 0; Ry[2][2] = cy;  Ry[2][3] = 0;
+        Ry[3][0] = 0;   Ry[3][1] = 0; Ry[3][2] = 0;   Ry[3][3] = 1;
+
+        // ---- Rotation X ----
+        float4x4 Rx;
+        Rx[0][0] = 1;  Rx[0][1] = 0;   Rx[0][2] = 0;  Rx[0][3] = 0;
+        Rx[1][0] = 0;  Rx[1][1] = cx;  Rx[1][2] = -sx; Rx[1][3] = 0;
+        Rx[2][0] = 0;  Rx[2][1] = sx;  Rx[2][2] = cx; Rx[2][3] = 0;
+        Rx[3][0] = 0;  Rx[3][1] = 0;   Rx[3][2] = 0;  Rx[3][3] = 1;
+
+        // =====================================================
+        // 3) 合成 R = Rz * Ry * Rx（手写矩阵乘法）
+        // =====================================================
+        float4x4 Rzy;
+        for (int i = 0; i < 4; i++)
+        {
+            for (int j = 0; j < 4; j++)
+            {
+                Rzy[i][j] =
+                    Rz[i][0] * Ry[0][j] +
+                    Rz[i][1] * Ry[1][j] +
+                    Rz[i][2] * Ry[2][j] +
+                    Rz[i][3] * Ry[3][j];
+            }
+        }
+
+        float4x4 R;
+        for (int i = 0; i < 4; i++)
+        {
+            for (int j = 0; j < 4; j++)
+            {
+                R[i][j] =
+                    Rzy[i][0] * Rx[0][j] +
+                    Rzy[i][1] * Rx[1][j] +
+                    Rzy[i][2] * Rx[2][j] +
+                    Rzy[i][3] * Rx[3][j];
+            }
+        }
+
+        // =====================================================
+        // 4) 合成 RS = R * S（手写矩阵乘法）
+        // =====================================================
+        float4x4 RS;
+        for (int i = 0; i < 4; i++)
+        {
+            for (int j = 0; j < 4; j++)
+            {
+                RS[i][j] =
+                    R[i][0] * S[0][j] +
+                    R[i][1] * S[1][j] +
+                    R[i][2] * S[2][j] +
+                    R[i][3] * S[3][j];
+            }
+        }
+    
+
+        // =====================================================
+        // 6) 最终矩阵 M = T * RS（手写矩阵乘法）
+        // =====================================================
+        float4x4 M;
+        for (int i = 0; i < 4; i++)
+        {
+            for (int j = 0; j < 4; j++)
+            {
+                M[i][j] =
+                    T[i][0] * RS[0][j] +
+                    T[i][1] * RS[1][j] +
+                    T[i][2] * RS[2][j] +
+                    T[i][3] * RS[3][j];
+            }
+        }
+
+        // =====================================================
+        // 7) 手写转置（Falcor float4x4 要 row-major）
+        // =====================================================
+        float4x4 MT;
+        for (int i = 0; i < 4; i++)
+        {
+            for (int j = 0; j < 4; j++)
+            {
+                MT[i][j] = M[j][i];
+            }
+        }
+
+        // =====================================================
+        // 8) 调用已有接口
+        // =====================================================
+        updateNodeTransform(nodeID, MT);
+
+    }
+    namespace py = pybind11;
+
+    // 将 Falcor float4x4 -> Python list[list[float]]
+    static py::list mat4_to_list(const float4x4& m)
+    {
+        py::list rows;
+        for (int r = 0; r < 4; r++)
+        {
+            py::list row;
+            for (int c = 0; c < 4; c++)
+            {
+                row.append(m[r][c]);
+            }
+            rows.append(row);
+        }
+        return rows;
+    }
+
+    
+
+    pybind11::list Scene::getSceneGraphPy()
+    {
+        namespace py = pybind11;
+        py::list out;
+
+        // ---- 在函数内部定义 Node -> dict 的 lambda ----
+        auto node_to_dict = [](const Node& n,int i)
+            {
+                py::dict d;
+                d["name"] = n.name;
+                d["nodeID"] = i;
+                d["parent"] = (uint32_t)n.parent.get();
+                d["transform"] = mat4_to_list(n.transform);
+                d["meshBind"] = mat4_to_list(n.meshBind);
+                d["localToBindSpace"] = mat4_to_list(n.localToBindSpace);
+                return d;
+            };
+
+        // ---- 遍历 vector 并 append ----
+        int i = 0;
+        for (const auto& n : mSceneGraph)
+        {
+            out.append(node_to_dict(n,i));
+            i = i + 1;
+        }
+
+        return out;
+    }
+    void Scene::updateMaterialRoughness(std::string name,float roughness)
+    {
+        auto iter = static_ref_cast<StandardMaterial>(mpMaterials->getMaterialByName(name));
+        iter->setRoughness(roughness);
     }
 
     void Scene::getMeshVerticesAndIndices(MeshID meshID, const std::map<std::string, ref<Buffer>>& buffers)
@@ -4266,7 +4463,7 @@ namespace Falcor
         scene.getDevice()->getRenderContext()->waitForFalcor();
 #endif
     }
-
+    
     inline void getMeshVerticesAndIndicesPython(Scene& scene, MeshID meshID, const pybind11::dict& dict)
     {
         std::map<std::string, ref<Buffer>> buffers;
@@ -4310,7 +4507,7 @@ namespace Falcor
         FALCOR_SCRIPT_BINDING_DEPENDENCY(Camera)
         FALCOR_SCRIPT_BINDING_DEPENDENCY(EnvMap)
         FALCOR_SCRIPT_BINDING_DEPENDENCY(SDFGrid)
-
+       
         // RenderSettings
         pybind11::class_<Scene::RenderSettings> renderSettings(m, "SceneRenderSettings");
         renderSettings.def_readwrite("useEnvLight", &Scene::RenderSettings::useEnvLight);
@@ -4355,12 +4552,13 @@ namespace Falcor
         scene.def_property(kAnimated.c_str(), &Scene::isAnimated, &Scene::setIsAnimated);
         scene.def_property(kLoopAnimations.c_str(), &Scene::isLooped, &Scene::setIsLooped);
         scene.def_property(kRenderSettings.c_str(), pybind11::overload_cast<>(&Scene::getRenderSettings, pybind11::const_), &Scene::setRenderSettings);
-
+        scene.def("get_scene_graph", &Scene::getSceneGraphPy);
         scene.def(kSetEnvMap.c_str(), &Scene::loadEnvMap, "path"_a);
         scene.def(kGetLight.c_str(), &Scene::getLight, "index"_a);
         scene.def(kGetLight.c_str(), &Scene::getLightByName, "name"_a);
         scene.def(kGetGridVolume.c_str(), &Scene::getGridVolume, "index"_a);
         scene.def(kGetGridVolume.c_str(), &Scene::getGridVolumeByName, "name"_a);
+        scene.def("updateNodeTransform", &Scene::updateNodeTransformPy, "nodeID"_a,"scale"_a,"translation"_a,"rotateXYZ"_a);
         scene.def("getVolume", &Scene::getGridVolume, "index"_a); // PYTHONDEPRECATED
         scene.def("getVolume", &Scene::getGridVolumeByName, "name"_a); // PYTHONDEPRECATED
         scene.def(kSetCameraBounds.c_str(), [](Scene* pScene, const float3& minPoint, const float3& maxPoint) {
@@ -4375,6 +4573,8 @@ namespace Falcor
         scene.def(kGetMaterial.c_str(), &Scene::getMaterialByName, "name"_a); // PYTHONDEPRECATED
         scene.def("get_material", &Scene::getMaterial, "index"_a);
         scene.def("get_material", &Scene::getMaterialByName, "name"_a);
+        scene.def("set_roughness", &Scene::updateMaterialRoughness, "name"_a,"roughness"_a);
+        scene.def("setMaterialSlotByTexturePath", &Scene::setMaterialSlotByTexturePath, "name"_a,"path"_a,"slot_name"_a);
         scene.def("addMaterial", &Scene::addMaterial, "material"_a);
         scene.def("getGeometryIDsForMaterial", [](const Scene* scene, const ref<Material>& pMaterial)
         {

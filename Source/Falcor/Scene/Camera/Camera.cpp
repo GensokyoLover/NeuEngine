@@ -367,6 +367,11 @@ namespace Falcor
         float2 depth = float2(mData.nearZ, mData.farZ);
         if (widget.var("Depth Range", depth, 0.f, FLT_MAX, 0.1f)) setDepthRange(depth.x, depth.y);
 
+        int2 debugPixel = int2(mData.debugPixel.x, mData.debugPixel.y);
+        int2 minPixel = int2(0, 0);
+        int2 maxPixel = mData.cameraResolution - int2(1, 1);
+        if (widget.var("Debug Pixel",debugPixel,0, 40000,1)) setDebugPixel(debugPixel.x, debugPixel.y);
+
         float3 pos = getPosition();
         if (widget.var("Position", pos, -FLT_MAX, FLT_MAX, 0.001f, false, "%.4f")) setPosition(pos);
 

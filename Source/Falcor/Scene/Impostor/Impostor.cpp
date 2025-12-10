@@ -47,16 +47,24 @@ namespace Falcor
             return false;
         }
 
-        std::ifstream ifs(folderPath + "//base.json");
+        std::ifstream ifs(folderPath + "//basic_info.json");
         if (!ifs.is_open()) {
             std::cerr << "Failed to open JSON file!" << std::endl;
-            return -1;
+            return false;
         }
 
-        // 2️⃣ 解析 JSON
+
         json j;
         ifs >> j;
+        radius = j["radius"].get<float>();
+        centorWS = float3(j["centorWS"][0].get<float>(), j["centorWS"][1].get<float>(), j["centorWS"][2].get<float>());
+        level = j["level"].get<int>();
+        texDim = uint2(j["texDim"][0].get<uint32_t>(), j["texDim"][1].get<uint32_t>());
+        invTexDim = 1.0f / float2(texDim);
+        baseCameraResolution = j["baseCameraResolution"].get<int>();
 
+
+        
         mpDepthArray = Texture::createFromFolder(pDevice, folderPath, false, false, ResourceBindFlags::ShaderResource, Bitmap::ImportFlags::None, vec[0]);
         mpAlbedoArray= Texture::createFromFolder(pDevice, folderPath, false, false, ResourceBindFlags::ShaderResource, Bitmap::ImportFlags::None, vec[1]);
         mpNormalArray= Texture::createFromFolder(pDevice, folderPath, false, false, ResourceBindFlags::ShaderResource, Bitmap::ImportFlags::None, vec[2]);
@@ -89,7 +97,7 @@ namespace Falcor
 
     void Impostor::createSampler(ref<Device> pDevice) {
         Sampler::Desc samplerDesc;
-        samplerDesc.setFilterMode(TextureFilteringMode::Linear, TextureFilteringMode::Linear, TextureFilteringMode::Linear);
+        samplerDesc.setFilterMode(TextureFilteringMode::Point, TextureFilteringMode::Point, TextureFilteringMode::Point);
         samplerDesc.setAddressingMode(TextureAddressingMode::Wrap, TextureAddressingMode::Clamp, TextureAddressingMode::Clamp);
         mpSampler = pDevice->createSampler(samplerDesc);
     }
@@ -151,6 +159,7 @@ namespace Falcor
         auto rPath = folder / "right.json";
         auto pPath = folder / "position.json";
         auto facePath = folder / "faces.json";
+        auto radiusPath = folder / "radius.json";
      
 
         std::vector<float3> forward = loadVec3ArrayTyped<float3>(fPath);
@@ -158,6 +167,10 @@ namespace Falcor
         std::vector<float3> right = loadVec3ArrayTyped<float3>(rPath);
         std::vector<float3> position = loadVec3ArrayTyped<float3>(pPath);
         std::vector<int3> face = loadVec3ArrayTyped<int3>(facePath);
+        std::ifstream file(radiusPath);
+        json r;
+        file >> r;
+        std::vector<float> viewRadius = r.get<std::vector<float>>();
         
         // 2️⃣ 校验数量一致
         size_t n = std::max({ forward.size(), up.size(), right.size() });
@@ -215,6 +228,15 @@ namespace Falcor
             face.data(),                     // 初始数据
             false                                      // 不需要 counter
         );
+        mpRadius = make_ref<Buffer>(
+            pDevice,
+            sizeof(float),                            // structSize
+            (uint32_t)viewRadius.size(),           // elementCount
+            ResourceBindFlags::ShaderResource,         // 绑定给 shader
+            MemoryType::DeviceLocal,           // GPU 专用
+            viewRadius.data(),                     // 初始数据
+            false                                      // 不需要 counter
+        );
 
     }
 
@@ -236,11 +258,13 @@ namespace Falcor
         if (mpRightDirs) var["cRight"] = mpRightDirs;
         if (mpPosition) var["cPosition"] = mpPosition;
         if (mpFaces) var["cFace"] = mpFaces;
-        var["viewCount"] = mViewCount;
-        var["texWidth"] = mTexWidth;
-        var["texHeight"] = mTexHeight;
-        var["margin"] = mMargin;
-        var["level"] = mLevel;
+        if (mpRadius) var["cRadius"] = mpRadius;
+        var["level"] = level;
+        var["centerWS"] = centorWS;
+        var["radius"] = radius;
+        var["invTexDim"] = invTexDim;
+        var["baseCameraResolution"] = baseCameraResolution;
+        var["texDim"] = texDim;
     }
 
     void Impostor::reload(RenderContext* pRenderContext)
@@ -257,11 +281,7 @@ namespace Falcor
         widget.text("Impostor: " + mName);
         widget.text(fmt::format("{}x{} views: {}", mTexWidth, mTexHeight, mViewCount));
 
-        float margin = mMargin;
-        if (widget.var("Margin", margin, 0.f, 2.f, 0.001f)) setMargin(margin);
 
-        float level = mLevel;
-        if (widget.var("Subdiv Level", level, 0.f, 8.f, 1.f)) setLevel(level);
 
      /*   if (mpTexArray)
         {
@@ -276,11 +296,7 @@ namespace Falcor
         }
 
         widget.separator();
-        if (widget.button("Dump Info"))
-        {
-            fmt::print("Impostor '{}' — {}x{} / {} views / level {:.1f}\n",
-                mName, mTexWidth, mTexHeight, mViewCount, mLevel);
-        }
+
     }
 
     FALCOR_SCRIPT_BINDING(Impostor)

@@ -68,6 +68,8 @@ struct CameraData
     float _padding2;
     int2 perViewResolution = int2(256, 256);
     int2 cameraResolution = int2(16,16);
+    int2 debugPixel = int2(0,0);
+    int2 lastDebugPixel = int2(0,0);
 };
 
 END_NAMESPACE_FALCOR

@@ -532,8 +532,8 @@ struct Scene
     VertexData getVertexData(const DisplacedTriangleHit hit, const float3 viewDir)
     {
         const uint3 vtxIndices = getIndices(hit.instanceID, hit.primitiveIndex);
-        const StaticVertexData vertices[3] = { gScene.getVertex(vtxIndices[0]), gScene.getVertex(vtxIndices[1]), gScene.getVertex(vtxIndices[2]) };
         const float3 barycentrics = hit.getBarycentricWeights();
+        const StaticVertexData vertices[3] = { gScene.getVertex(vtxIndices[0]), gScene.getVertex(vtxIndices[1]), gScene.getVertex(vtxIndices[2]) };
         const float4x4 worldMat = gScene.getWorldMatrix(hit.instanceID);
         const float3x3 worldInvTransposeMat = getInverseTransposeWorldMatrix(hit.instanceID);
         const bool isFrontFaceCW = isObjectFrontFaceCW(hit.instanceID);

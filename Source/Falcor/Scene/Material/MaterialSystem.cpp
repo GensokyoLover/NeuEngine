@@ -340,7 +340,9 @@ namespace Falcor
     {
         for (const auto& pMaterial : mMaterials)
         {
-            if (pMaterial->getName() == name) return pMaterial;
+            std::cout << name << "---" << pMaterial->getName() << std::endl;
+            if (pMaterial->getName() == name)
+                return pMaterial;
         }
         return nullptr;
     }

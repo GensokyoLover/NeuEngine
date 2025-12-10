@@ -36,7 +36,8 @@ extern "C" FALCOR_API_EXPORT void registerPlugin(Falcor::PluginRegistry& registr
 
 namespace
 {
-const char kShaderFile[] = "RenderPasses/ImpostorTracer/ImpostorTracer.rt.slang";
+const char kShaderRtFile[] = "RenderPasses/ImpostorTracer/ImpostorTracer.rt.slang";
+const char kShaderCsFile[] = "RenderPasses/ImpostorTracer/ImpostorTracer.cs.slang";
 
 // Ray tracing settings that affect the traversal stack size.
 // These should be set as small as possible.
@@ -46,10 +47,6 @@ const uint32_t kMaxRecursionDepth = 2u;
 const char kInputViewDir[] = "viewW";
 
 const ChannelList kInputChannels = {
-    // clang-format off
-    { "vbuffer",        "gVBuffer",     "Visibility buffer in packed format" },
-    { kInputViewDir,    "gViewW",       "World-space view direction (xyz float format)", true /* optional */ },
-    // clang-format on
 };
 
 const ChannelList kOutputChannels = {
@@ -77,6 +74,11 @@ ImpostorTracer::ImpostorTracer(ref<Device> pDevice, const Properties& props) : R
     // Create a sample generator.
     mpSampleGenerator = SampleGenerator::create(mpDevice, SAMPLE_GENERATOR_UNIFORM);
     FALCOR_ASSERT(mpSampleGenerator);
+    {
+        ProgramDesc desc;
+        desc.addShaderLibrary(kShaderCsFile).csEntry("writeBuffer");
+        mpTracePass = ComputePass::create(mpDevice, desc);
+    }
 }
 
 void ImpostorTracer::parseProperties(const Properties& props)
@@ -156,34 +158,13 @@ void ImpostorTracer::execute(RenderContext* pRenderContext, const RenderData& re
         logWarning("Depth-of-field requires the '{}' input. Expect incorrect shading.", kInputViewDir);
     }
 
-    // Specialize program.
-    // These defines should not modify the program vars. Do not trigger program vars re-creation.
-    mTracer.pProgram->addDefine("MAX_BOUNCES", std::to_string(mMaxBounces));
-    mTracer.pProgram->addDefine("COMPUTE_DIRECT", mComputeDirect ? "1" : "0");
-    mTracer.pProgram->addDefine("USE_IMPORTANCE_SAMPLING", mUseImportanceSampling ? "1" : "0");
-    mTracer.pProgram->addDefine("USE_ANALYTIC_LIGHTS", mpScene->useAnalyticLights() ? "1" : "0");
-    mTracer.pProgram->addDefine("USE_EMISSIVE_LIGHTS", mpScene->useEmissiveLights() ? "1" : "0");
-    mTracer.pProgram->addDefine("USE_ENV_LIGHT", mpScene->useEnvLight() ? "1" : "0");
-    mTracer.pProgram->addDefine("USE_ENV_BACKGROUND", mpScene->useEnvBackground() ? "1" : "0");
-
-    // For optional I/O resources, set 'is_valid_<name>' defines to inform the program of which ones it can access.
-    // TODO: This should be moved to a more general mechanism using Slang.
-    mTracer.pProgram->addDefines(getValidResourceDefines(kInputChannels, renderData));
-    mTracer.pProgram->addDefines(getValidResourceDefines(kOutputChannels, renderData));
-
-    // Prepare program vars. This may trigger shader compilation.
-    // The program should have all necessary defines set at this point.
-    if (!mTracer.pVars)
-        prepareVars();
-    FALCOR_ASSERT(mTracer.pVars);
 
     // Set constants.
     auto impostor = mpScene->getImpostor();
-  
-    auto var = mTracer.pVars->getRootVar();
+    auto var = mpTracePass->getRootVar();
+
     
-    var["CB"]["gFrameCount"] = mFrameCount;
-    var["CB"]["gPRNGDimension"] = dict.keyExists(kRenderPassPRNGDimension) ? dict[kRenderPassPRNGDimension] : 0u;
+
     impostor->bindShaderData(var["gImpostor"]);
     // Bind I/O buffers. These needs to be done per-frame as the buffers may change anytime.
     auto bind = [&](const ChannelDesc& desc)
@@ -201,10 +182,11 @@ void ImpostorTracer::execute(RenderContext* pRenderContext, const RenderData& re
     // Get dimensions of ray dispatch.
     const uint2 targetDim = renderData.getDefaultTextureDims();
     FALCOR_ASSERT(targetDim.x > 0 && targetDim.y > 0);
-
+    mpScene->bindShaderData(mpTracePass->getRootVar()["gScene"]);
+    var["CB"]["dim"] = uint2(targetDim.x,targetDim.y);
     // Spawn the rays.
-    mpScene->raytrace(pRenderContext, mTracer.pProgram.get(), mTracer.pVars, uint3(targetDim, 1));
-
+    
+    mpTracePass->execute(pRenderContext, { targetDim.x,targetDim.y, 1u });
     mFrameCount++;
 }
 
@@ -247,66 +229,67 @@ void ImpostorTracer::setScene(RenderContext* pRenderContext, const ref<Scene>& p
         {
             logWarning("ImpostorTracer: This render pass does not support custom primitives.");
         }
+        if (false) {
+            // Create ray tracing program.
+            ProgramDesc desc;
+            desc.addShaderModules(mpScene->getShaderModules());
+            desc.addShaderLibrary(kShaderRtFile);
+            desc.setMaxPayloadSize(kMaxPayloadSizeBytes);
+            desc.setMaxAttributeSize(mpScene->getRaytracingMaxAttributeSize());
+            desc.setMaxTraceRecursionDepth(kMaxRecursionDepth);
 
-        // Create ray tracing program.
-        ProgramDesc desc;
-        desc.addShaderModules(mpScene->getShaderModules());
-        desc.addShaderLibrary(kShaderFile);
-        desc.setMaxPayloadSize(kMaxPayloadSizeBytes);
-        desc.setMaxAttributeSize(mpScene->getRaytracingMaxAttributeSize());
-        desc.setMaxTraceRecursionDepth(kMaxRecursionDepth);
+            mTracer.pBindingTable = RtBindingTable::create(2, 2, mpScene->getGeometryCount());
+            auto& sbt = mTracer.pBindingTable;
+            sbt->setRayGen(desc.addRayGen("rayGen"));
+            sbt->setMiss(0, desc.addMiss("scatterMiss"));
+            sbt->setMiss(1, desc.addMiss("shadowMiss"));
 
-        mTracer.pBindingTable = RtBindingTable::create(2, 2, mpScene->getGeometryCount());
-        auto& sbt = mTracer.pBindingTable;
-        sbt->setRayGen(desc.addRayGen("rayGen"));
-        sbt->setMiss(0, desc.addMiss("scatterMiss"));
-        sbt->setMiss(1, desc.addMiss("shadowMiss"));
+            if (mpScene->hasGeometryType(Scene::GeometryType::TriangleMesh))
+            {
+                sbt->setHitGroup(
+                    0,
+                    mpScene->getGeometryIDs(Scene::GeometryType::TriangleMesh),
+                    desc.addHitGroup("scatterTriangleMeshClosestHit", "scatterTriangleMeshAnyHit")
+                );
+                sbt->setHitGroup(
+                    1, mpScene->getGeometryIDs(Scene::GeometryType::TriangleMesh), desc.addHitGroup("", "shadowTriangleMeshAnyHit")
+                );
+            }
 
-        if (mpScene->hasGeometryType(Scene::GeometryType::TriangleMesh))
-        {
-            sbt->setHitGroup(
-                0,
-                mpScene->getGeometryIDs(Scene::GeometryType::TriangleMesh),
-                desc.addHitGroup("scatterTriangleMeshClosestHit", "scatterTriangleMeshAnyHit")
-            );
-            sbt->setHitGroup(
-                1, mpScene->getGeometryIDs(Scene::GeometryType::TriangleMesh), desc.addHitGroup("", "shadowTriangleMeshAnyHit")
-            );
+            if (mpScene->hasGeometryType(Scene::GeometryType::DisplacedTriangleMesh))
+            {
+                sbt->setHitGroup(
+                    0,
+                    mpScene->getGeometryIDs(Scene::GeometryType::DisplacedTriangleMesh),
+                    desc.addHitGroup("scatterDisplacedTriangleMeshClosestHit", "", "displacedTriangleMeshIntersection")
+                );
+                sbt->setHitGroup(
+                    1,
+                    mpScene->getGeometryIDs(Scene::GeometryType::DisplacedTriangleMesh),
+                    desc.addHitGroup("", "", "displacedTriangleMeshIntersection")
+                );
+            }
+
+            if (mpScene->hasGeometryType(Scene::GeometryType::Curve))
+            {
+                sbt->setHitGroup(
+                    0, mpScene->getGeometryIDs(Scene::GeometryType::Curve), desc.addHitGroup("scatterCurveClosestHit", "", "curveIntersection")
+                );
+                sbt->setHitGroup(1, mpScene->getGeometryIDs(Scene::GeometryType::Curve), desc.addHitGroup("", "", "curveIntersection"));
+            }
+
+            if (mpScene->hasGeometryType(Scene::GeometryType::SDFGrid))
+            {
+                sbt->setHitGroup(
+                    0,
+                    mpScene->getGeometryIDs(Scene::GeometryType::SDFGrid),
+                    desc.addHitGroup("scatterSdfGridClosestHit", "", "sdfGridIntersection")
+                );
+                sbt->setHitGroup(1, mpScene->getGeometryIDs(Scene::GeometryType::SDFGrid), desc.addHitGroup("", "", "sdfGridIntersection"));
+            }
+
+            mTracer.pProgram = Program::create(mpDevice, desc, mpScene->getSceneDefines());
         }
-
-        if (mpScene->hasGeometryType(Scene::GeometryType::DisplacedTriangleMesh))
-        {
-            sbt->setHitGroup(
-                0,
-                mpScene->getGeometryIDs(Scene::GeometryType::DisplacedTriangleMesh),
-                desc.addHitGroup("scatterDisplacedTriangleMeshClosestHit", "", "displacedTriangleMeshIntersection")
-            );
-            sbt->setHitGroup(
-                1,
-                mpScene->getGeometryIDs(Scene::GeometryType::DisplacedTriangleMesh),
-                desc.addHitGroup("", "", "displacedTriangleMeshIntersection")
-            );
-        }
-
-        if (mpScene->hasGeometryType(Scene::GeometryType::Curve))
-        {
-            sbt->setHitGroup(
-                0, mpScene->getGeometryIDs(Scene::GeometryType::Curve), desc.addHitGroup("scatterCurveClosestHit", "", "curveIntersection")
-            );
-            sbt->setHitGroup(1, mpScene->getGeometryIDs(Scene::GeometryType::Curve), desc.addHitGroup("", "", "curveIntersection"));
-        }
-
-        if (mpScene->hasGeometryType(Scene::GeometryType::SDFGrid))
-        {
-            sbt->setHitGroup(
-                0,
-                mpScene->getGeometryIDs(Scene::GeometryType::SDFGrid),
-                desc.addHitGroup("scatterSdfGridClosestHit", "", "sdfGridIntersection")
-            );
-            sbt->setHitGroup(1, mpScene->getGeometryIDs(Scene::GeometryType::SDFGrid), desc.addHitGroup("", "", "sdfGridIntersection"));
-        }
-
-        mTracer.pProgram = Program::create(mpDevice, desc, mpScene->getSceneDefines());
     }
 }
 

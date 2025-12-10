@@ -326,7 +326,7 @@ public:
      * Copy an acceleration structure.
      */
     void copyAccelerationStructure(RtAccelerationStructure* dest, RtAccelerationStructure* source, RtAccelerationStructureCopyMode mode);
-
+    uint gframeCount = 0;
 private:
     RenderContext(gfx::ICommandQueue* pQueue);
 

@@ -158,6 +158,7 @@ namespace Falcor
         /** Set the camera's depth range.
         */
         void setDepthRange(float nearZ, float farZ) { mData.farZ = farZ;  mData.nearZ = nearZ; mDirty = true; }
+        void setDebugPixel(float x, float y) { mData.debugPixel.x = x;  mData.debugPixel.y = y; mDirty = true; }
 
         /** Set the near plane depth.
         */

@@ -5,7 +5,6 @@
 #include "Utils/Math/AABB.h"
 #include "Utils/UI/Gui.h"
 #include "Utils/Timing/CpuTimer.h"
-#include "Scene/Scene.h"
 #include "Core/API/Texture.h"
 #include "Core/API/Buffer.h"
 #include "Core/API/Sampler.h"
@@ -64,11 +63,8 @@ namespace Falcor
         uint32_t getWidth() const { return mTexWidth; }
         uint32_t getHeight() const { return mTexHeight; }
 
-        void setMargin(float margin) { mMargin = margin; mDirty = true; }
-        float getMargin() const { return mMargin; }
 
-        void setLevel(float level) { mLevel = level; mDirty = true; }
-        float getLevel() const { return mLevel; }
+
 
         /** Bind all resources into a shader variable. */
         void bindShaderData(const ShaderVar& var) const;
@@ -95,13 +91,20 @@ namespace Falcor
         ref<Buffer> mpRightDirs;
         ref<Buffer> mpPosition;
         ref<Buffer> mpFaces;
+        ref<Buffer> mpRadius;
         ref<Sampler> mpSampler;
 
         uint32_t mViewCount = 0;
         uint32_t mTexWidth = 0;
         uint32_t mTexHeight = 0;
-        float mMargin = 1.05f;
-        float mLevel = 0.f;
+    
+
+        float radius;
+        float3 centorWS;
+        uint32_t level;
+        uint2 texDim;
+        float2 invTexDim;
+        uint32_t baseCameraResolution;
     };
 
 } // namespace Falcor

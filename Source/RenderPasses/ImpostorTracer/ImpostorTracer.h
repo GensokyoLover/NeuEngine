@@ -72,7 +72,7 @@ private:
     ref<Scene> mpScene;
     /// GPU sample generator.
     ref<SampleGenerator> mpSampleGenerator;
-
+    ref<ComputePass> mpTracePass;
     // Configuration
 
     /// Max number of indirect bounces (0 = none).

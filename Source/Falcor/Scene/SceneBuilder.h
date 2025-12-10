@@ -414,6 +414,7 @@ namespace Falcor
             \return The ID of the mesh in the scene. Note that all of the instances share the same mesh ID.
         */
         MeshID addMesh(const Mesh& mesh);
+        void addTextureSlot(const std::string& name, const std::string& path, const std::string& slot);
 
         /** Add a triangle mesh.
             \param The triangle mesh to add.
@@ -596,7 +597,8 @@ namespace Falcor
             \return The camera ID
         */
         CameraID addCamera(const ref<Camera>& pCamera);
-
+        void addImpostor(std::string folderPath);
+        void setMaterial(std::string name,std::string folderPath);
         /** Get the selected camera.
         */
         ref<Camera> getSelectedCamera() const;

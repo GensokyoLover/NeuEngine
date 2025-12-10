@@ -15,6 +15,7 @@ def render_graph_MinimalPathTracer():
     g.addEdge("VBufferRT.viewW", "MinimalPathTracer.viewW")
     g.addEdge("MinimalPathTracer.color", "AccumulatePass.input")
     g.markOutput("ToneMapper.dst")
+    g.markOutput("MinimalPathTracer.emission")
     return g
 
 MinimalPathTracer = render_graph_MinimalPathTracer()

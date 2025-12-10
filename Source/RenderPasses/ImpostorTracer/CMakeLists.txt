@@ -4,6 +4,7 @@ target_sources(ImpostorTracer PRIVATE
     ImpostorTracer.cpp
     ImpostorTracer.h
     ImpostorTracer.rt.slang
+    ImpostorTracer.cs.slang
 )
 
 target_copy_shaders(ImpostorTracer RenderPasses/ImpostorTracer)

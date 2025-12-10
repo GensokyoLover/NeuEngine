@@ -71,8 +71,6 @@ cbuffer CB
 }
 
 // Inputs
-Texture2D<PackedHitInfo> gVBuffer;
-Texture2D<float4> gViewW; // Optional
 
 // Outputs
 RWTexture2D<float4> gOutputColor;
@@ -187,18 +185,7 @@ ShadingData loadShadingData(const HitInfo hit, const float3 rayOrigin, const flo
  */
 float3 getPrimaryRayDir(uint2 launchIndex, uint2 launchDim, const Camera camera)
 {
-    if (is_valid(gViewW))
-    {
-        // If we have the view vector bound as a buffer, just fetch it. No need to compute anything.
-        return -gViewW[launchIndex].xyz;
-    }
-    else
-    {
-        // Compute the view vector. This must exactly match what the G-buffer pass is doing (jitter etc.).
-        // Note that we do not take depth-of-field into account as it would require exactly matching the
-        // sample generator between the passes, which is error prone. The host side will issue a warning instead.
-        return camera.computeRayPinhole(launchIndex, launchDim,false).dir;
-    }
+    return camera.computeRayPinhole(launchIndex, launchDim,false).dir;
 }
 
 /**
@@ -399,95 +386,8 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim)
         fake_ray = gScene.camera.computeRayPinhole(pixel, frameDim, false);
     const float3 primaryRayOrigin = fake_ray.origin;
     const float3 primaryRayDir = fake_ray.dir;
-
-    const HitInfo hit = HitInfo(gVBuffer[pixel]);
-    if (hit.isValid())
-    {
-        // Pixel represents a valid primary hit. Compute its contribution.
-
-        const bool isCurveHit = hit.getType() == HitType::Curve;
-
-        // Load shading data.
-        ShadingData sd = loadShadingData(hit, primaryRayOrigin, primaryRayDir);
-
-        // Create material instance at shading point.
-        let lod = ExplicitLodTextureSampler(0.f);
-        let mi = gScene.materials.getMaterialInstance(sd, lod);
-
-        // Create sample generator.
-        SampleGenerator sg = SampleGenerator(pixel, gFrameCount);
-
-        // Advance the generator to the first available dimension.
-        // TODO: This is potentially expensive. We may want to store/restore the state from memory if it becomes a problem.
-        for (uint i = 0; i < gPRNGDimension; i++)
-            sampleNext1D(sg);
-
-        // Compute ray origin for new rays spawned from the G-buffer.
-        float3 rayOrigin;
-        if (isCurveHit)
-        {
-            // For curves, we set the new origin at the sphere center.
-            rayOrigin = sd.posW - sd.curveRadius * sd.frame.N;
-        }
-        else
-        {
-            rayOrigin = sd.computeRayOrigin();
-        }
-
-        if (kComputeDirect)
-        {
-            // Always output directly emitted light, independent of whether emissive materials are treated as light sources or not.
-            outColor += mi.getProperties(sd).emission;
-
-            // Add contribution of direct light from analytic lights.
-            // Light probe and mesh lights are handled by the scatter ray hit/miss shaders.
-            outColor += kUseAnalyticLights ? evalDirectAnalytic(sd, mi, sg) : float3(0.f);
-        }
-
-        // Prepare ray payload.
-        ScatterRayData rayData = ScatterRayData(sg);
-
-        // Generate scatter ray.
-        if (!generateScatterRay(sd, mi, isCurveHit, rayOrigin, rayData))
-            rayData.terminated = true;
-        BSDFProperties brdf = mi.getProperties(sd);
-        gPosition[pixel] = float4(sd.posW, 1.f);
-        gSpecular[DispatchRaysIndex().xy] = float4(brdf.specularReflectionAlbedo, 1.f);
-        //gSpecular[DispatchRaysIndex().xy] = float4(primaryRayDir, 1.f);
-        float depth = length(sd.posW - primaryRayOrigin);
-        gNormal[DispatchRaysIndex().xy] = float4(brdf.guideNormal, 1.f);
-        gRoughness[DispatchRaysIndex().xy] = brdf.roughness;
-        gDepth[DispatchRaysIndex().xy] = depth;
-        gAlbedo[DispatchRaysIndex().xy] = float4(float3(gImpostor.texFaceIndex.Sample(gImpostor.samplerLinear,float3((0.5 + pixel.x)/2048,(0.5 + pixel.y)/2048,0))),1);
-        //gDepth[DispatchRaysIndex().xy] = gScene.camera.data.frameWidth;
-        for (uint depth = 0; depth <= kMaxBounces && !rayData.terminated; depth++)
-        {
-            // Trace scatter ray. If it hits geometry, the closest hit shader samples
-            // direct illumination and generates the next scatter ray.
-            traceScatterRay(rayData);
-        }
-
-        // Store contribution from scatter ray.
-        outColor += rayData.radiance;
-    }
-    else
-    {
-        // Background pixel.
-        outColor = kUseEnvBackground ? gScene.envMap.eval(primaryRayDir) : kDefaultBackgroundColor;
-        gPosition[DispatchRaysIndex().xy] = float4(0);
-        // Follow path into the scene and compute its total contribution.
-        gAlbedo[DispatchRaysIndex().xy] = float4(0);
-        //gAlbedo[DispatchRaysIndex().xy] = gImpostor.sample(0, (float2(pixel) + 0.5) / float2(frameDim));
-        gSpecular[DispatchRaysIndex().xy] = float4(0);
-        gAlbedo[DispatchRaysIndex().xy] = gImpostor.texAlbedo.Sample(gImpostor.samplerLinear, float3(0, (float2(pixel) + 0.5) / float2(frameDim)));
-        gNormal[DispatchRaysIndex().xy] = float4(0);
-        // // gNormal[DispatchRaysIndex().xy] = float4(brdf.guideNormal, 1.f);
-        // gNormal[DispatchRaysIndex().xy] = float4(-primaryRayDir, 1.f);
-        gRoughness[DispatchRaysIndex().xy] = 0;
-        gDepth[DispatchRaysIndex().xy] = 0;
-        gAlbedo[DispatchRaysIndex().xy] = float4( float3(gImpostor.texFaceIndex.Sample(gImpostor.samplerLinear, float3((0.5 + pixel.x) / 2048, (0.5 + pixel.y) / 2048, 0))), 1 );
-    }
-
+    float4 output = sampleImpostor(gImpostor, primaryRayDir, primaryRayOrigin);
+    outColor = output.rgb;
     return outColor;
 }
 

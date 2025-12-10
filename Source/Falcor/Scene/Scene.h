@@ -43,7 +43,7 @@
 #include "Volume/GridVolume.h"
 #include "Volume/Grid.h"
 #include "SDFs/SDFGrid.h"
-
+#include "Core/API/Texture.h"
 #include "Core/Macros.h"
 #include "Core/Object.h"
 #include "Core/API/VAO.h"
@@ -58,7 +58,7 @@
 #include "Utils/SplitBuffer.h"
 
 #include <sigs/sigs.h>
-
+#include "Scene/Material/Material.h"
 #include <functional>
 #include <memory>
 #include <type_traits>
@@ -243,6 +243,7 @@ namespace Falcor
         */
         struct SceneData
         {
+            
             using ImportDict = std::map<std::string, std::string>;
             std::vector<std::filesystem::path> importPaths;         ///< Paths of the asset files the scene was loaded from.
             std::vector<ImportDict> importDicts;                    ///< Dictionaries used to load each asset in importPaths.
@@ -299,6 +300,10 @@ namespace Falcor
             // Custom primitive data
             std::vector<CustomPrimitiveDesc> customPrimitiveDesc;   ///< Custom primitive descriptors.
             std::vector<AABB> customPrimitiveAABBs;                 ///< List of AABBs for custom primitives in world space. Each custom primitive consists of one AABB.
+            std::vector<std::string> ImpostorList;
+            std::vector<std::string> texturePath;
+            std::vector<std::string> materialName;
+            std::vector<std::string> materialSlot;
         };
 
         /** Statistics.
@@ -484,7 +489,7 @@ namespace Falcor
         */
         const ref<Camera>& getCamera() const override;
         const ref<Impostor>& getImpostor() const override;
-
+        void addImpostor();
         /** Get the camera bounds
         */
         AABB getCameraBounds() { return mCameraBounds; }
@@ -492,7 +497,7 @@ namespace Falcor
         /** Set the camera bounds
         */
         void setCameraBounds(const AABB& aabb);
-        void addImpostor();
+        void addVideoTexture(std::string path);
 
         /** Get a list of all cameras in the scene.
         */
@@ -730,6 +735,9 @@ namespace Falcor
         /** Updates a node in the graph.
         */
         void updateNodeTransform(uint32_t nodeID, const float4x4& transform);
+        void updateNodeTransformPy(uint32_t nodeID, float3 scale, float3 transform,float3 rotation);
+        pybind11::list getSceneGraphPy();
+        void updateMaterialRoughness(std::string name, float roughness);
 
         /** Get the number of custom primitives.
         */
@@ -815,6 +823,7 @@ namespace Falcor
         /** Get a material by name.
         */
         ref<Material> getMaterialByName(const std::string& name) const { return mpMaterials->getMaterialByName(name); }
+        void setMaterialSlotByTexturePath(const std::string& name, const std::string& path, const std::string& slot_name);
 
         /** Add a material.
             \param pMaterial The material.
@@ -1455,6 +1464,7 @@ namespace Falcor
             return mMeshStaticData;
         }
         std::vector<ref<Impostor>> mImpostors;
+        ref<Texture> videoTexture;
         const SplitVertexBuffer& getMeshStaticData() const
         {
             return mMeshStaticData;

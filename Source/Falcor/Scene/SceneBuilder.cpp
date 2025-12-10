@@ -235,6 +235,7 @@ namespace Falcor
             try
             {
                 mpScene = Scene::create(pDevice, SceneCache::readCache(pDevice, mSceneCacheKey));
+             
                 return;
             }
             catch (const std::exception& e)
@@ -400,6 +401,15 @@ namespace Falcor
 
         // Create the scene object.
         mpScene = Scene::create(mpDevice, std::move(mSceneData));
+        for (int i = 0; i < mSceneData.materialName.size(); i++) {
+            mpScene->setMaterialSlotByTexturePath(mSceneData.materialName[i],mSceneData.texturePath[i],mSceneData.materialSlot[i]);
+        }
+        
+        //mpScene->addVideoTexture("H:\\Falcor\\output_flipped_frames\\");
+        for (int i = 0; i < mSceneData.ImpostorList.size(); i++) {
+            mpScene->addImpostor();
+            mpScene->mImpostors[mpScene->mImpostors.size()-1]->loadFromFolder(mpDevice, mSceneData.ImpostorList[i]);
+        }
         mSceneData = {};
 
         timeReport.measure("Creating resources");
@@ -414,10 +424,16 @@ namespace Falcor
     {
         return addProcessedMesh(processMesh(mesh));
     }
-
+    void SceneBuilder::addTextureSlot(const std::string& name, const std::string& path, const std::string& slot) {
+        mSceneData.materialName.push_back(name);
+        mSceneData.texturePath.push_back(path);
+        mSceneData.materialSlot.push_back(slot);
+    }
     MeshID SceneBuilder::addTriangleMesh(const ref<TriangleMesh>& pTriangleMesh, const ref<Material>& pMaterial, bool isAnimated)
     {
         FALCOR_CHECK(pTriangleMesh != nullptr, "'pTriangleMesh' is missing");
+        FALCOR_CHECK(pTriangleMesh != nullptr, "'pTrianglePath' is miss");
+        FALCOR_CHECK(pTriangleMesh != nullptr, "'pTrianglSloth' is missing");
         FALCOR_CHECK(pMaterial != nullptr, "'pMaterial' is missing");
 
         Mesh mesh;
@@ -1012,6 +1028,9 @@ namespace Falcor
         mSceneData.cameras.push_back(pCamera);
         FALCOR_ASSERT(mSceneData.cameras.size() <= std::numeric_limits<uint32_t>::max());
         return CameraID(mSceneData.cameras.size() - 1);
+    }
+    void SceneBuilder::addImpostor(std::string folderPath) {
+        mSceneData.ImpostorList.push_back(folderPath);
     }
 
     ref<Camera> SceneBuilder::getSelectedCamera() const
@@ -2980,6 +2999,7 @@ namespace Falcor
         sceneBuilder.def_property("cameraSpeed", &SceneBuilder::getCameraSpeed, &SceneBuilder::setCameraSpeed);
         sceneBuilder.def("importScene", &SceneBuilder::import, "path"_a, "dict"_a = pybind11::dict());
         sceneBuilder.def("addTriangleMesh", &SceneBuilder::addTriangleMesh, "triangleMesh"_a, "material"_a, "isAnimated"_a = false);
+        sceneBuilder.def("addTextureSlot", &SceneBuilder::addTextureSlot, "name"_a, "path"_a, "slot"_a);
         sceneBuilder.def("addSDFGrid", &SceneBuilder::addSDFGrid, "sdfGrid"_a, "material"_a);
         sceneBuilder.def("addMaterial", &SceneBuilder::addMaterial, "material"_a);
         sceneBuilder.def("replaceMaterial", &SceneBuilder::replaceMaterial, "material"_a, "replacement"_a);
@@ -2994,6 +3014,7 @@ namespace Falcor
         sceneBuilder.def("getLight", &SceneBuilder::getLight, "name"_a);
         sceneBuilder.def("loadLightProfile", &SceneBuilder::loadLightProfile, "filename"_a, "normalize"_a = true);
         sceneBuilder.def("addCamera", &SceneBuilder::addCamera, "camera"_a);
+        sceneBuilder.def("addImpostor", &SceneBuilder::addImpostor, "folderPath"_a);
         sceneBuilder.def("addAnimation", &SceneBuilder::addAnimation, "animation"_a);
         sceneBuilder.def("createAnimation", &SceneBuilder::createAnimation, "animatable"_a, "name"_a, "duration"_a);
         sceneBuilder.def("addNode", [] (SceneBuilder* pSceneBuilder, const std::string& name, const Transform& transform, NodeID parent) {

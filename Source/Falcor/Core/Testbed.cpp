@@ -61,6 +61,7 @@ void Testbed::run()
         accumulate_spp = accumulate_spp + 1;
 
     }
+    mFrameRate.reset();
 }
 
 void Testbed::interrupt()
@@ -84,7 +85,7 @@ void Testbed::frame()
         mpWindow->pollForEvents();
 
     RenderContext* pRenderContext = mpDevice->getRenderContext();
-
+    pRenderContext->gframeCount = mFrameRate.getFrameCount() - 1;
     // Clear the frame buffer.
     const float4 clearColor(1, 0, 1, 1);
     pRenderContext->clearFbo(mpTargetFBO.get(), clearColor, 1.0f, 0, FboAttachmentType::All);

@@ -456,10 +456,11 @@ ref<Texture> Texture::createFromFolder(
         if (!entry.is_regular_file()) continue;
         auto path = entry.path();
         auto ext = entry.path().extension().string();
+        
         std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
         if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" || ext == ".exr" || ext == ".hdr")
         {
-            auto filename = path.filename().string();
+            auto filename = path.filename().string();std::cout << filename << std::endl;
             if (filename.rfind(prefix, 0) == 0)  // 从头匹配前缀
             {
                 imagePaths.push_back(entry.path());

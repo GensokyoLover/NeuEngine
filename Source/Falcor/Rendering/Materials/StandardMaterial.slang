@@ -122,7 +122,9 @@ struct StandardMaterial : MaterialBase, IMaterial
         if (sd.frontFacing)
         {
             emission = ms.sampleTexture(data.texEmissive, s, sd.uv, float4(data.emissive, 1), lod).rgb * data.emissiveFactor;
+ 
         }
+        
 
         d.volumeAnsiotropy = data.volumeAnisotropy;
         d.volumeScattering = data.volumeScattering;
