@@ -63,7 +63,8 @@ const ChannelList kOutputChannels = {
     { "depth",          "gDepth", "Output color (sum of direct and indirect)", false, ResourceFormat::RGBA32Float },
     { "emission",          "gEmissive", "Output color (sum of direct and indirect)", false, ResourceFormat::RGBA32Float },
     { "view",          "gView", "Output color (sum of direct and indirect)", false, ResourceFormat::RGBA32Float },
-    { "raypos",          "gRayPos", "Output color (sum of direct and indirect)", false, ResourceFormat::RGBA32Float }
+    { "raypos",          "gRayPos", "Output color (sum of direct and indirect)", false, ResourceFormat::RGBA32Float },
+    { "mind",          "gMinDepth", "Output color (sum of direct and indirect)", false, ResourceFormat::RGBA32Float }
    // { "fresenel",          "gFresnel", "Output color (sum of direct and indirect)", false, ResourceFormat::R32Float },
     // clang-format on
 };
@@ -184,6 +185,7 @@ void MinimalPathTracer::execute(RenderContext* pRenderContext, const RenderData&
     // Set constants.
     auto var = mTracer.pVars->getRootVar();
     var["CB"]["gFrameCount"] = pRenderContext->gframeCount;
+    printf("frame %d\n", pRenderContext->gframeCount);
     var["CB"]["gPRNGDimension"] = dict.keyExists(kRenderPassPRNGDimension) ? dict[kRenderPassPRNGDimension] : 0u;
 
     // Bind I/O buffers. These needs to be done per-frame as the buffers may change anytime.

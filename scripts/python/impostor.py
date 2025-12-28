@@ -4,6 +4,7 @@ from mpl_toolkits.mplot3d import Axes3D
 from futils import  *
 import os
 import json
+from utils import * 
 import cv2
 import torch
 def sampling_radii_from_aabb(aabb_min, aabb_max, fov_deg=60, margin=1.05):
@@ -365,8 +366,8 @@ def generate_impostor_by_falcor(resolution,testbed,scene_path,output_path,object
     basic_info["radius"] = o_radius
     basic_info["centorWS"] = centor.tolist()
     
-    for subdiv_level in range(2):
-        level_resolution = final_resolution//base
+    for subdiv_level in range(1,6):
+        level_resolution = final_resolution
         testbed.resize_frame_buffer(level_resolution,level_resolution)
         basic_info["level"] = subdiv_level
         basic_info["texDim"] = [level_resolution,level_resolution]
@@ -472,7 +473,8 @@ buffer_channel ={
     "roughness":1,
     "view":3,
     "raypos":3,
-    "AccumulatePassoutput":3
+    "AccumulatePassoutput":3,
+    "mind":1
 }
 class ImpostorPT:
     def __init__(self):
@@ -541,9 +543,10 @@ def ray_sphere_intersect(rayPos, rayDir, center, radius):
     hit = disc >= 0
 
     t0 = -b - torch.sqrt(torch.clamp(disc, min=0.0))
+    t1 = -b + torch.sqrt(torch.clamp(disc, min=0.0))
     t0 = torch.where(hit, t0, torch.zeros_like(t0))
     t0 = torch.where(t0<0, 0, t0)
-
+    hit = hit & (t1 >= 0)
     return hit, t0
 
 def getNearestImpostorView(impostor, direction):
@@ -720,7 +723,8 @@ def sampleImpostorAccuratePT(
     N=512,
     W=512,
     H=512,
-    debug=False
+    debug=False,
+    reference_pos = None
 ):
     device = rayDirW.device
     B = rayDirW.shape[0]
@@ -734,7 +738,8 @@ def sampleImpostorAccuratePT(
 
     # 最近 3 个视图
     triCameraIdx = getNearestImpostorView(impostor, -rayDirW)   # (B,3)
-
+    if triCameraIdx.shape[0] == 64 * 64:
+        pyexr.write(r"./triCameraIdx.exr",triCameraIdx.reshape(64,64,3).cpu().numpy())
     # 结果存储
     samples    = torch.zeros((B,3,4), device=device)   # 每个视图的 RGB 和 placeholder
     samples_position    = torch.zeros((B,3,3), device=device)   # 每个视图的 RGB 和 placeholder
@@ -769,6 +774,24 @@ def sampleImpostorAccuratePT(
     # -------------------------
     hitFoundFinal = torch.zeros((B,3)).cuda()
     uv_back = torch.zeros((B,3,2)).cuda()
+    if reference_pos is not None:
+        final_pos = reference_pos
+        proj_uv = []
+        proj_viewIdx = triCameraIdx  # (B,3)
+
+        for i in range(3):
+            uv_i = project_world_to_view_uv(
+                impostor,
+                final_pos,                     # (B,3)
+                triCameraIdx[:, i],            # (B,)
+                device=device
+            )   # (B,2)
+
+            proj_uv.append(uv_i)
+
+        proj_uv = torch.stack(proj_uv, dim=1)   # (B,3,2)
+        uvi = torch.cat([proj_uv,proj_viewIdx.unsqueeze(-1).float()],dim=-1)
+        return uvi, final_pos
     for i in range(3):
         viewIdx = triCameraIdx[:,i]               # (B,)
         
@@ -818,9 +841,9 @@ def sampleImpostorAccuratePT(
 
         theta = (hitPosV - hitPosW).norm(dim=-1)
         # 条件：uv valid、depth valid（深度非零）、并且 rayDepth >= depth
-        depth_valid = depth > 1e-6
+        depth_valid = depth < 5
     
-        intersect_mask = valid_uv & depth_valid & (lenth_delta >= depth) & (theta < (viewRadius/256.0))
+        intersect_mask = valid_uv & depth_valid & (lenth_delta >= depth) & (theta < (viewRadius/256.0)) 
 
         # 现在 intersect_mask: (B,N) = True at intersection positions
 
@@ -834,7 +857,7 @@ def sampleImpostorAccuratePT(
         first_hit_idx = indices_masked.min(dim=1).values  # (B,)
 
         # hitFound: 如果 first_hit_idx < N 就说明有命中
-        hitFound = first_hit_idx < N
+        hitFound = first_hit_idx < N 
     
 
         safe_idx = torch.clamp(first_hit_idx, 0, N - 1)        # 防止 miss 时越界
@@ -847,9 +870,22 @@ def sampleImpostorAccuratePT(
         
         intersect_emission[:,i,:] = emission
         hitFoundFinal[:,i] = hitFound.float()
-        final_pos = torch.where(sellect_depth.unsqueeze(-1) < minTheta.unsqueeze(-1), hitPosW, final_pos)
-        final_emission = torch.where(sellect_depth.unsqueeze(-1) < minTheta.unsqueeze(-1), emission, final_emission)
-        minTheta = torch.where(sellect_depth<minTheta,sellect_depth,minTheta)
+        final_pos = torch.where((sellect_depth.unsqueeze(-1) < minTheta.unsqueeze(-1)) & hitSphere.unsqueeze(-1) & hitFound.unsqueeze(-1), hitPosW, final_pos)
+        final_emission = torch.where((sellect_depth.unsqueeze(-1) < minTheta.unsqueeze(-1)) & hitSphere.unsqueeze(-1) & hitFound.unsqueeze(-1), emission, final_emission)
+        minTheta = torch.where((sellect_depth<minTheta) &hitSphere & hitFound ,sellect_depth,minTheta)
+    any_hit = minTheta < 1e9   # 或者用 hitFoundFinal.any(dim=1)
+
+    final_pos = torch.where(
+        any_hit.unsqueeze(-1),
+        final_pos,
+        torch.zeros_like(final_pos)
+    )
+
+    final_emission = torch.where(
+        any_hit.unsqueeze(-1),
+        final_emission,
+        torch.zeros_like(final_emission)
+    )
     
     if debug:
         return final_pos,final_emission,intersect_emission,triCameraIdx,searchStart,triCameraP,triCameraU,triCameraR,triSellect
@@ -869,7 +905,7 @@ def sampleImpostorAccuratePT(
 
         proj_uv = torch.stack(proj_uv, dim=1)   # (B,3,2)
         uvi = torch.cat([proj_uv,proj_viewIdx.unsqueeze(-1).float()],dim=-1)
-        return uvi
+        return uvi, final_pos
 
 def sampleImpostorDebugPixel(
     impostor,
@@ -1047,7 +1083,45 @@ def load_impostor(name,level):
         impostor.texDict[name][:,:,id,:] = torch.Tensor(pyexr.read(path + file)[:,:,:buffer_channel[name]]).cuda()
     return impostor
 
-
+def load_impostor2(name,level):
+    path = r"H:\Falcor\media\inv_rendering_scenes\object_level_config/{}level{}/".format(name,level)
+    impostor = ImpostorPT()
+    with open(path + "basic_info.json","r") as file:
+        basic_info = json.load(file)
+    impostor.radius = basic_info["radius"]
+    impostor.centerWS = torch.tensor(basic_info["centorWS"], dtype=torch.float32).cuda()
+    with open(path + "faces.json","r") as file:
+        faces_info = json.load(file)
+    impostor.cFace = torch.tensor(faces_info, dtype=torch.int32).cuda()
+    with open(path + "forward.json","r") as file:
+        forward_info = json.load(file)
+    impostor.cForward = torch.tensor(forward_info, dtype=torch.float32).cuda()
+    with open(path + "up.json","r") as file:
+        up_info = json.load(file)
+    impostor.cUp = torch.tensor(up_info, dtype=torch.float32).cuda()
+    with open(path + "right.json","r") as file:
+        right_info = json.load(file)
+    impostor.cRight = torch.tensor(right_info, dtype=torch.float32).cuda()
+    with open(path + "position.json","r") as file:
+        position_info = json.load(file)
+    impostor.cPosition = torch.tensor(position_info, dtype=torch.float32).cuda()
+    with open(path + "radius.json","r") as file:
+        radius_info = json.load(file)
+    impostor.cRadius = torch.tensor(radius_info, dtype=torch.float32).cuda().unsqueeze(-1)
+    # 读取 lookup_uint16.png,用opencv读取
+    texFaceIndex = cv2.imread(path + "lookup_uint16.png", cv2.IMREAD_UNCHANGED)
+    impostor.texFaceIndex = torch.tensor(texFaceIndex, dtype=torch.int32).cuda()
+    file_list = os.listdir(path)
+    impostor.texDict = {}
+    for key in ["albedo","specular","depth","emission","normal","position","roughness","view","raypos"]:
+        impostor.texDict[key] = torch.zeros((42,512,512,buffer_channel[key])).cuda()
+    for file in file_list:
+        if file.split(".")[-1] != "exr":
+            continue
+        name = file.split("_")[0]
+        id = int(file.split("_")[1].split(".")[0])
+        impostor.texDict[name][id,:,:,:] = torch.Tensor(pyexr.read(path + file)[:,:,:buffer_channel[name]]).cuda()
+    return impostor
 def invert_matrix_4x4(M):
     return torch.inverse(M)
 
@@ -1167,7 +1241,8 @@ def chunk_process_debug(impostor,rayDir_local, rayPos_local,W,H,chunk=32768):
     return torch.cat(out_pos, dim=0), torch.cat(out_emi, dim=0), torch.cat(out_ie, dim=0), torch.cat(out_ca, dim=0), torch.cat(out_pa, dim=0), torch.cat(out_cap, dim=0), torch.cat(out_cau, dim=0), torch.cat(out_car, dim=0), torch.cat(out_y, dim=0)
 
 
-def chunk_process(impostor,rayDir_local, rayPos_local, W,H,chunk=32768):
+
+def chunk_process(impostor,rayDir_local, rayPos_local, W,H,chunk=32768,reference_pos=None):
     """
     将射线拆分为多个批次执行 sampleImpostorAccuratePT
     rayDir_local: (N,3)
@@ -1176,20 +1251,24 @@ def chunk_process(impostor,rayDir_local, rayPos_local, W,H,chunk=32768):
     """
     N = rayDir_local.shape[0]
     out_uvi = []
-
+    final_pos = []
     for i in range(0, N, chunk):
         rd = rayDir_local[i:i+chunk]
         rp = rayPos_local[i:i+chunk]
-
-        uvi = sampleImpostorAccuratePT(
+        if reference_pos != None:
+            referp = reference_pos[i:i+chunk]
+        else:
+            referp = None
+        uvi,pos = sampleImpostorAccuratePT(
             impostor,
             rd,
             rp,
-            512, W, H
+            512, W, H,
+            reference_pos=referp
         )
         out_uvi.append(uvi)
-    return torch.cat(out_uvi, dim=0)
-
+        final_pos.append(pos)
+    return torch.cat(out_uvi, dim=0),torch.cat(final_pos, dim=0)
 
 def sample_impostor_uv_grid(impostor, coords, tex_name="emission", device="cuda"):
     """
@@ -1247,7 +1326,7 @@ def sample_impostor_uv_grid(impostor, coords, tex_name="emission", device="cuda"
     return sampled.squeeze(-1).squeeze(-1)
 
 
-def sample_impostor_uv_bilinear(impostor, coords, tex_name="emission", device="cuda"):
+def sample_impostor_uv_bilinear_byidx(coords, tex, device="cuda"):
     """
     手动 bilinear 从 impostor 采样：
     输入:
@@ -1264,7 +1343,7 @@ def sample_impostor_uv_bilinear(impostor, coords, tex_name="emission", device="c
     v = coords[:, 1]
     viewIdx = coords[:, 2].long()
 
-    tex = impostor.texDict[tex_name].to(device)     # (H, W, V, C)
+    
     H, W, V, C = tex.shape
 
     # -------------------------
@@ -1308,118 +1387,100 @@ def sample_impostor_uv_bilinear(impostor, coords, tex_name="emission", device="c
     )  # (B, C)
 
     return sampled
+from typing import Any, Dict
+def tocuda(obj: Any, device: str | torch.device = "cuda", non_blocking: bool = True) -> Any:
+    """
+    Recursively move all torch.Tensors inside a (nested) dict/list/tuple/set to CUDA (or a given device).
 
-from torch.utils.data import Dataset
+    Args:
+        obj: Can be a Tensor, dict, list, tuple, set, or any other python object.
+        device: Target device. Default "cuda".
+        non_blocking: Passed to Tensor.to(...). Effective when source is pinned CPU memory.
 
-class ImpostorTrainingDataset(Dataset):
-    def __init__(self, 
-                 root_dir,
-                 device="cuda"):
+    Returns:
+        The same structure as obj, with all tensors moved to `device`.
+    """
+    if torch.is_tensor(obj):
+        # Keep dtype; move device only
+        return obj.to(device=device, non_blocking=non_blocking)
 
-        """
-        root_dir:
-            e.g.  H:/Falcor/media/inv_rendering_scenes/bunny_ref_512_scale/
-        
-        training_keys:
-            training_datasets_list (list of strings)
-        
-        buffer_channel:
-            每个 key 的通道数，例如 {"raypos":3, "view":3, ...}
-        
-        transform:
-            可选，对每个样本做数据增强（一般不用）
-        
-        device:
-            "cuda" or "cpu"
-        """
+    if isinstance(obj, dict):
+        return {k: tocuda(v, device=device, non_blocking=non_blocking) for k, v in obj.items()}
 
-        self.root_dir = root_dir
-        self.training_keys = ["AccumulatePassoutput","albedo","depth","specular","normal","position","roughness","view","raypos","emission"]
+    if isinstance(obj, list):
+        return [tocuda(v, device=device, non_blocking=non_blocking) for v in obj]
 
-        self.device = device
+    if isinstance(obj, tuple):
+        return tuple(tocuda(v, device=device, non_blocking=non_blocking) for v in obj)
 
-        # 所有子目录 idx 列出来
-        self.indices = sorted([
-            int(name) for name in os.listdir(root_dir)
-            if name.isdigit()
-        ])
-        roughness_sorted_file = os.path.join(root_dir, "roughness_sorted.json")
-        if os.path.exists(roughness_sorted_file):
-            with open(roughness_sorted_file, "r") as f:
-                self.roughness_dict = json.load(f)
-        else:
-            mean_list = []
-            for idx in self.indices:
-                data = self.__getitem__(idx)
-                roughness = data["roughness"]
-                mask = data["mask"]
-                mean_roughness = (roughness * mask).sum() / (mask.sum() + 1e-3)
-                pyexr.write(r"H:\Falcor\media\inv_rendering_scenes\bunny_ref_512_scale\0/mask.exr",mask.cpu().numpy().astype(np.float32))
-                mean_list.append((idx, mean_roughness.item()))
-            sorted_list = sorted(mean_list, key=lambda x: x[1])
+    if isinstance(obj, set):
+        return {tocuda(v, device=device, non_blocking=non_blocking) for v in obj}
 
-            # sorted_list 是 [(idx, mean_r), ...]
-            print("排序结果：")
-            for idx, val in sorted_list:
-                print(idx, val)
-            print(f"Dataset loaded: {len(self.indices)} samples.")
-            output_path = "roughness_sorted.json"
+    # Leave other objects unchanged (numbers, strings, None, etc.)
+    return obj
 
-            with open(root_dir + output_path, "w") as f:
-                json.dump(
-                    {str(idx): val for idx, val in sorted_list}, 
-                    f, 
-                    indent=4
-                )
-            print("已保存 JSON 至:", output_path)
-            self.roughness_dict =sorted_list
-        self.roughness_list = [0.05,0.1,0.2,0.3,1]
-        self.threshold_bins = {}
-        for roughness in self.roughness_list:
-            self.threshold_bins[roughness] = []
-        cnt = 0
-        for idx in self.roughness_dict:
-            val = self.roughness_dict[idx]
-            for r in self.roughness_list:
-                if val <= r:
-                    self.threshold_bins[r].append(idx)
-        self.state = 0
-        print(1)
+def sample_impostor_uv_bilinear(coords, tex, device="cuda"):
+    """
+    手动 bilinear 从 impostor 采样：
+    输入:
+        coords: (B,3)  -> (u,v,viewIdx)
+            u,v ∈ [-1,1]
+            viewIdx: long
 
-    def __len__(self):
-        return len(self.indices)
+    输出:
+        sampled: (B,C)
+    """
 
-    def __getitem__(self, idx):
-        file_list = self.threshold_bins[self.roughness_list[self.state]]
-        idx = idx % len(file_list)
-        scene_id = int(file_list[idx])
+    coords = coords.to(device)
+    u = coords[:, 0]          # [-1,1]
+    v = coords[:, 1]
+    viewIdx = coords[:, 2].long()
 
-        folder = os.path.join(self.root_dir, f"{scene_id}")
-        sample = {}
+    
+    H, W, C = tex.shape
 
-        # ----------------------------
-        # 读取 EXR buffer
-        # ----------------------------
-        for key in self.training_keys:
-            exr_path = os.path.join(folder, f"{key}_{scene_id:05d}.exr")
+    # -------------------------
+    # 将 [-1,1] 映射到 [0,W-1] / [0,H-1]
+    # -------------------------
+    uf = (u + 1) * 0.5 * (W - 1)     # float pixel space
+    vf = (v + 1) * 0.5 * (H - 1)
 
-            data = pyexr.read(exr_path)[..., : buffer_channel[key]]
-            tensor = torch.tensor(data, dtype=torch.float32, device=self.device)
+    # 找到邻域像素
+    x0 = uf.floor().long().clamp(0, W - 1)
+    x1 = (x0 + 1).clamp(0, W - 1)
+    y0 = vf.floor().long().clamp(0, H - 1)
+    y1 = (y0 + 1).clamp(0, H - 1)
 
-            sample[key] = tensor  # shape: (H,W,C)
-        sample["mask"] = sample["position"].sum(dim=-1,keepdim=True)!=0
-        # ----------------------------
-        # 读取 node.json
-        # ----------------------------
-        json_path = os.path.join(folder, "node.json")
-        with open(json_path, "r") as f:
-            node = json.load(f)
+    # bilinear 权重
+    wx = uf - x0.float()   # (B,)
+    wy = vf - y0.float()
 
-        sample["node"] = node  # dict，不转 GPU
+    w00 = (1 - wx) * (1 - wy)
+    w01 = (1 - wx) * wy
+    w10 = wx * (1 - wy)
+    w11 = wx * wy
 
+    # -------------------------
+    # 逐视角索引采样：VERY MEMORY EFFICIENT
+    # -------------------------
+    # tex: (H, W, V, C)
+    s00 = tex[y0, x0, :]   # (B,C)
+    s01 = tex[y1, x0, :]
+    s10 = tex[y0, x1, :]
+    s11 = tex[y1, x1, :]
 
+    # -------------------------
+    # 进行加权
+    # -------------------------
+    sampled = (
+        s00 * w00.unsqueeze(-1) +
+        s01 * w01.unsqueeze(-1) +
+        s10 * w10.unsqueeze(-1) +
+        s11 * w11.unsqueeze(-1)
+    )  # (B, C)
 
-        return sample,scene_id
+    return sampled
+
 import torch.nn as nn
 class ViewEncoder(nn.Module):
     def __init__(self, in_ch=3, feat_dim=64):
@@ -1502,7 +1563,82 @@ class MultiViewImpostorNetwork(nn.Module):
     
 from collections import defaultdict
 
+def group_by_view_triplet_with_roughness_fast(sample, max_view=65535, max_rbin=255):
+    """
+    返回 buckets: dict[key_tuple] -> item(dict of tensors)
+    key_tuple = (i0,i1,i2,rbin)
 
+    关键优化：
+    - 不做 per-pixel .item()
+    - 不做 per-pixel Python dict append
+    """
+    reflect_uvi = sample["reflect_uvi"]               # (B,3,3)  or (H,W,3,3) 你要确认语义
+    roughness   = sample["roughness"].reshape(-1)     # (P,)
+    mask        = sample["mask"].reshape(-1)          # (P,)
+    device = reflect_uvi.device
+
+    valid_idx = torch.nonzero(mask, as_tuple=False).squeeze(-1)
+    if valid_idx.numel() == 0:
+        return {}
+
+    # 取 triplet 和 rbin
+    triplets = reflect_uvi[valid_idx, :, 2].long()    # (M,3)
+    rbin = compute_roughness_bin(roughness)[valid_idx].long()  # (M,)
+
+    # -------- pack key to int64: [i0 | i1 | i2 | rbin] -------
+    # 这里用 16bit/16bit/16bit/8bit 举例；你可按实际范围调整
+    if triplets.max() > max_view or rbin.max() > max_rbin:
+        raise ValueError("max_view/max_rbin too small for your indices")
+
+    key_id = (triplets[:, 0] << 40) | (triplets[:, 1] << 24) | (triplets[:, 2] << 8) | rbin
+    #          16 bits          16 bits          16 bits        8 bits
+
+    # -------- group by unique key id -------
+    uniq, inv = torch.unique(key_id, return_inverse=True)  # uniq: (K,), inv:(M,)
+
+    # 把同一桶的像素排到一起
+    order = torch.argsort(inv)
+    inv_sorted = inv[order]
+    valid_sorted = valid_idx[order]  # 这是“全局像素 index”，你想要的
+
+    # 每个桶的大小
+    counts = torch.bincount(inv_sorted, minlength=uniq.numel())
+    offsets = torch.cumsum(counts, dim=0)
+    starts = offsets - counts
+
+    # -------- flatten data once -------
+    flat_data = {}
+    for k, v in sample.items():
+        if k in ["node"]:
+            continue
+        if k in ["reflect_uvi", "first_uvi","reference_uvi","reference_uvi2"]:
+            flat_data[k] = v.reshape(-1, v.shape[-2], v.shape[-1])
+        else:
+            flat_data[k] = v.reshape(-1, v.shape[-1])
+
+    # -------- build buckets (Python loop over K buckets, not M pixels) -------
+    buckets = {}
+    for bi in range(uniq.numel()):
+        s = starts[bi].item()
+        e = offsets[bi].item()
+        idxs = valid_sorted[s:e]  # (count,)
+
+        # decode key tuple (optional)
+        kid = uniq[bi].item()
+        i0 = (kid >> 40) & 0xFFFF
+        i1 = (kid >> 24) & 0xFFFF
+        i2 = (kid >> 8)  & 0xFFFF
+        rb = kid & 0xFF
+        key_tuple = (int(i0), int(i1), int(i2), int(rb))
+
+        item = {}
+        for k, arr in flat_data.items():
+            item[k] = arr[idxs]
+
+        item["mask"] = mask[idxs]
+        buckets[key_tuple] = item
+
+    return buckets
 
 def group_by_view_triplet_with_roughness(sample):
     """
@@ -1535,8 +1671,6 @@ def group_by_view_triplet_with_roughness(sample):
     # 计算 roughness bin
     # ---------------------------
     rbin = compute_roughness_bin(roughness)[valid_idx]  # shape = (M,)
-    print(roughness[valid_idx].mean())
-    print(roughness[valid_idx][0])
     # ---------------------------
     # 构造最终 key = (i0,i1,i2,rbin)
     # ---------------------------
@@ -1561,7 +1695,7 @@ def group_by_view_triplet_with_roughness(sample):
     for key, value in sample.items():
         if key in ["node"]:
             continue
-        elif key in ["reflect_uvi", "first_uvi"]:
+        elif key in ["reflect_uvi", "first_uvi","reference_uvi","reference_uvi2"]:
             flat_data[key] = value.reshape(-1, value.shape[-2], value.shape[-1])
         else:
             flat_data[key] = value.reshape(-1, value.shape[-1])
@@ -1582,6 +1716,8 @@ def group_by_view_triplet_with_roughness(sample):
 
         # reflect_uvi / first_uvi 也要取
         item["reflect_uvi"] = sample["reflect_uvi"][idxs]
+        item["reference_uvi"] = sample["reference_uvi"][idxs]
+        item["reference_uvi2"] = sample["reference_uvi2"][idxs]
         if "first_uvi" in sample:
             item["first_uvi"] = sample["first_uvi"][idxs]
 
@@ -1631,10 +1767,178 @@ def save_bucket_chunk(SAVE_ROOT,scene_id, triplet, bucket_data, chunk_idx=0):
         f.write(enc.compress(packed))
 
     print(f"[Saved] {full_path}  ({len(numpy_bucket[list(numpy_bucket.keys())[0]])} pixels)")
+import time
 
-def dataset_process(path,impostor):
+def dataset_process(path,impostor,test=False):
+    roughness = torch.round(torch.arange(0.0, 1.0 + 1e-9, 0.01) * 100) / 100
+    theta95_deg = ggx_theta99_from_roughness(roughness, alpha_is_roughness_sq=True, degrees=True).cuda()
+    print(theta95_deg)
     MAX_BUCKET_SIZE = 256 * 256  # 65536
-    SAVE_ROOT =path + "buckets/"
+    SAVE_ROOT =path + "buckets_1/"
+    os.makedirs(SAVE_ROOT, exist_ok=True)
+    file_list = os.listdir(path)
+    final_bucket = {}
+    bucket_save_count = {}  
+    cnt = 0
+    for scene_str in file_list:
+        if scene_str == "buckets_1":
+            continue
+        scene_id = int(scene_str)
+        folder = os.path.join(path, f"{scene_id}")
+        sample = {}
+
+        for key in  ["AccumulatePassoutput","albedo","depth","specular","normal","position","roughness","view","raypos","emission","mind"]:
+            exr_path = os.path.join(folder, f"{key}_{scene_id:05d}.exr")
+
+            data = pyexr.read(exr_path)[..., : buffer_channel[key]]
+
+            sample[key] = torch.Tensor(data).cuda()  # shape: (H,W,C)
+        #pyexr.write("H:/Falcor/media/inv_rendering_scenes/object_level_config/Bunny/{}roughness.exr".format(scene_id),sample["roughness"].cpu().numpy())
+        sample["mask"] = (sample["position"].sum(dim=-1,keepdim=True)!=0) & (sample["roughness"] < 0.0001) & (sample["normal"][...,2:3]<0.1) & (sample["mind"] != 1000)
+        #sample["mask"] = (sample["position"].sum(dim=-1,keepdim=True)!=0) & (sample["roughness"] > 0.0001) & (sample["normal"][...,2:3]<0.1)
+        if sample["mask"].sum() < 1:
+            print("continue ",scene_id)
+            continue
+        json_path = os.path.join(folder, "node.json")
+        with open(json_path, "r") as f:
+            node = json.load(f)
+        half_angle_deg = theta95_deg[(sample["roughness"].reshape(-1)*100).long()].reshape(-1)
+        sample["node"] = node  # dict，不转 GPU
+
+        W,H,_ =sample["raypos"].shape
+        
+        rayPosW,rayDirW = sample["raypos"].reshape(-1,3),-sample["view"].reshape(-1,3)
+        normal = sample["normal"].reshape(-1,3)
+        reflectPosW = sample["position"].reshape(-1,3)
+        reflectDirW = compute_reflection_direction(rayDirW,normal)
+        
+        print(torch.Tensor(sample["node"]["Light"]["transform"]))
+        rayPos_local, rayDir_local = transform_rays_world_to_local(
+            rayPosW,
+            rayDirW,
+            torch.Tensor(sample["node"]["Light"]["transform"])
+        )
+        refelctPosL, reflectDirL = transform_rays_world_to_local(
+            reflectPosW,
+            reflectDirW,
+            torch.Tensor(sample["node"]["Light"]["transform"])
+        )
+        
+        sample["refelctPosL"] = refelctPosL
+        sample["reflectDirL"] = reflectDirL
+        reference_pos = refelctPosL + reflectDirL * sample["mind"].reshape(-1,1) / 0.8
+        cone_radius = cone_radius_deg(sample["mind"].reshape(-1,1) / 0.8,half_angle_deg.reshape(-1,1))
+        reference_pos2 = refelctPosL + reflectDirL * (sample["mind"].reshape(-1,1) / 0.8 +  cone_radius)
+        sample["referencePosL"] = (refelctPosL + reflectDirL * sample["mind"].reshape(-1,1) / 0.8).reshape(512,512,3)
+        torch.cuda.synchronize()
+        t0 = time.perf_counter()
+        first_uvi,_ = chunk_process(impostor, rayDir_local, rayPos_local, W=W, H=H, chunk=512*512//8)
+        torch.cuda.synchronize()
+        t1 = time.perf_counter()
+        print(f"[TIMER] chunk_process(first_uvi): {(t1 - t0)*1000:.3f} ms")
+
+        torch.cuda.synchronize()
+        t0 = time.perf_counter()
+        
+      
+  
+        reflect_uvi,_ = chunk_process(impostor, reflectDirL, refelctPosL, W=W, H=H, chunk=512*512//8 )
+        sample["reflect_uvi"] = reflect_uvi.reshape(512,512,3,3)
+        sample["first_uvi"] = first_uvi.reshape(512,512,3,3)
+        
+        reference_uvi,_ =  chunk_process(impostor, reflectDirL, refelctPosL, W=W, H=H, chunk=512*512//8 ,reference_pos=reference_pos)
+        reference_uvi2,_ =  chunk_process(impostor, reflectDirL, refelctPosL, W=W, H=H, chunk=512*512//8 ,reference_pos=reference_pos2)
+        sample["reference_uvi"] = reference_uvi.reshape(512,512,3,3)
+        sample["reference_uvi2"] = reference_uvi2.reshape(512,512,3,3)
+        for i in range(3):
+            pyexr.write("./reflect_uvi_{}.exr".format(i),reflect_uvi[:,i,:].reshape(512,512,3).cpu().numpy())
+            pyexr.write("./reference_uvi_{}.exr".format(i),reference_uvi[:,i,:].reshape(512,512,3).cpu().numpy())
+            pyexr.write("./reference_uvi2_{}.exr".format(i),reference_uvi2[:,i,:].reshape(512,512,3).cpu().numpy())
+        N = rayDir_local.shape[0]
+        out_uvi = []
+        # for i in range(0, N, 64):
+        #     rd = rayDir_local[i:i+chunk]
+        #     rp = rayPos_local[i:i+chunk]
+
+        #     uvi = sampleImpostorAccuratePT(
+        #         impostor,
+        #         rd,
+        #         rp,
+        #         512, W, H
+        #     )
+        #     out_uvi.append(uvi)
+        # return torch.cat(out_uvi, dim=0)
+
+        torch.cuda.synchronize()
+        t1 = time.perf_counter()
+        print(f"[TIMER] chunk_process(reflect_uvi): {(t1 - t0)*1000:.3f} ms")
+        # pyexr.write("output.exr",sample["AccumulatePassoutput"].reshape(512,512,3).cpu().numpy())
+        
+        
+        pos = sample["refelctPosL"]
+        dir = sample["reflectDirL"]
+        rr = sample["roughness"]
+
+        halfAngle = theta95_deg[(rr * 100).long()]
+        halfRadius = halfAngle * np.pi / 180.0
+        mask = sphere_covers_cone(pos,dir,halfRadius,torch.Tensor([impostor.radius]).cuda())
+        sample["mask"] = sample["mask"] & mask.reshape(512,512,1)
+        if test:
+            fn = f"{cnt}.pkl.zst"
+            full_path = os.path.join(path,"test", fn)
+
+            # 转 numpy
+
+            enc = zstd.ZstdCompressor(level=3)
+            packed = pickle.dumps(sample)
+
+            with open(full_path, "wb") as f:
+                f.write(enc.compress(packed))
+            cnt = cnt+ 1
+            continue
+        M = torch.tensor(sample["node"]["Light"]["transform"], dtype=torch.float32).cuda()
+        torch.cuda.synchronize()
+        t0 = time.perf_counter()
+        buckets = group_by_view_triplet_with_roughness_fast(sample)
+        #buckets2 = group_by_view_triplet_with_roughness(sample)
+        torch.cuda.synchronize()
+        t1 = time.perf_counter()
+        print(f"[TIMER] group_by_view_triplet_with_roughness(reflect_uvi): {(t1 - t0)*1000:.3f} ms")
+        #continue
+        for triplet, bucket_data in buckets.items():
+
+            # 初始化 final bucket
+            if triplet not in final_bucket:
+                final_bucket[triplet] = {k: v.clone() for k, v in bucket_data.items()}
+                bucket_save_count[triplet] = 0
+            else:
+                # 追加（拼接）
+                for key in final_bucket[triplet]:
+                    final_bucket[triplet][key] = torch.cat([
+                        final_bucket[triplet][key],
+                        bucket_data[key]
+                    ], dim=0)
+
+            # 检查长度是否超过阈值
+            N = final_bucket[triplet]["reflect_uvi"].shape[0]
+
+            while N > MAX_BUCKET_SIZE:
+
+                # 截取前 MAX_BUCKET_SIZE 条保存
+                chunk_data = {k: v[:MAX_BUCKET_SIZE] for k, v in final_bucket[triplet].items()}
+                save_bucket_chunk(SAVE_ROOT,scene_id, triplet, chunk_data, bucket_save_count[triplet])
+                bucket_save_count[triplet] += 1
+
+                # 删除已保存的部分，保留剩余
+                final_bucket[triplet] = {k: v[MAX_BUCKET_SIZE:] for k, v in final_bucket[triplet].items()}
+                N = final_bucket[triplet]["reflect_uvi"].shape[0]
+
+    return sample,scene_id
+
+
+def dataset_process_debug(path,impostor):
+    MAX_BUCKET_SIZE = 512 * 512  # 65536
+    SAVE_ROOT =path + "buckets_fix/"
     os.makedirs(SAVE_ROOT, exist_ok=True)
     file_list = os.listdir(path)
     final_bucket = {}
@@ -1651,8 +1955,8 @@ def dataset_process(path,impostor):
 
             sample[key] = torch.Tensor(data).cuda()  # shape: (H,W,C)
         #pyexr.write("H:/Falcor/media/inv_rendering_scenes/object_level_config/Bunny/{}roughness.exr".format(scene_id),sample["roughness"].cpu().numpy())
-        sample["mask"] = (sample["position"].sum(dim=-1,keepdim=True)!=0) & (sample["roughness"] > 0.0001)
-
+        #sample["mask"] = (sample["position"].sum(dim=-1,keepdim=True)!=0) & (sample["roughness"] < 0.0001) & (sample["normal"][...,2:3]<0.1)
+  
         json_path = os.path.join(folder, "node.json")
         with open(json_path, "r") as f:
             node = json.load(f)
@@ -1696,42 +2000,17 @@ def dataset_process(path,impostor):
         )
         sample["reflect_uvi"] = reflect_uvi
         sample["first_uvi"] = reflect_uvi
+        sample["refelctPosL"] = refelctPosL
+        sample["reflectDirL"] = reflectDirL
         # pyexr.write("H:/Falcor/media/inv_rendering_scenes/object_level_config/Bunny/{}mask.exr".format(scene_id),sample["mask"].reshape(H,W,1).cpu().numpy())
         # for i in range(3):
         #     reflect_emission = sample_impostor_uv_bilinear(impostor,reflect_uvi[:,i,:],tex_name="emission")
         #     pyexr.write("H:/Falcor/media/inv_rendering_scenes/object_level_config/Bunny/{}reflect_uvi{}.exr".format(scene_id,i),reflect_uvi[:,i,:].reshape(H,W,3).cpu().numpy())
         #     pyexr.write("H:/Falcor/media/inv_rendering_scenes/object_level_config/Bunny/{}debug_emission{}.exr".format(scene_id,i),reflect_emission[:,:].reshape(H,W,3).cpu().numpy())
         M = torch.tensor(train_data["node"]["Light"]["transform"], dtype=torch.float32).cuda()
-        buckets = group_by_view_triplet_with_roughness(sample)
-        #continue
-        for triplet, bucket_data in buckets.items():
-
-            # 初始化 final bucket
-            if triplet not in final_bucket:
-                final_bucket[triplet] = {k: v.clone() for k, v in bucket_data.items()}
-                bucket_save_count[triplet] = 0
-            else:
-                # 追加（拼接）
-                for key in final_bucket[triplet]:
-                    final_bucket[triplet][key] = torch.cat([
-                        final_bucket[triplet][key],
-                        bucket_data[key]
-                    ], dim=0)
-
-            # 检查长度是否超过阈值
-            N = final_bucket[triplet]["reflect_uvi"].shape[0]
-
-            while N > MAX_BUCKET_SIZE:
-
-                # 截取前 MAX_BUCKET_SIZE 条保存
-                chunk_data = {k: v[:MAX_BUCKET_SIZE] for k, v in final_bucket[triplet].items()}
-                save_bucket_chunk(SAVE_ROOT,scene_id, triplet, chunk_data, bucket_save_count[triplet])
-                bucket_save_count[triplet] += 1
-
-                # 删除已保存的部分，保留剩余
-                final_bucket[triplet] = {k: v[MAX_BUCKET_SIZE:] for k, v in final_bucket[triplet].items()}
-                N = final_bucket[triplet]["reflect_uvi"].shape[0]
-
+        
+        save_bucket_chunk(SAVE_ROOT,scene_id, triplet, chunk_data, bucket_save_count[triplet])
+                
     return sample,scene_id
 
 
@@ -1890,3 +2169,379 @@ def dataset_process_mp(path, impostor, num_workers=8):
             )
 
     print("[Main] dataset_process_mp done.")
+
+
+def compute_uvi(train_data,impostor,W,H):
+    rayPosW,rayDirW = train_data["raypos"].reshape(-1,3),-train_data["view"].reshape(-1,3)
+    normal = train_data["normal"].reshape(-1,3)
+    reflectPosW = train_data["position"].reshape(-1,3)
+    reflectDirW = compute_reflection_direction(rayDirW,normal)
+    
+    print(torch.Tensor(train_data["node"]["Light"]["transform"]))
+    rayPos_local, rayDir_local = transform_rays_world_to_local(
+        rayPosW,
+        rayDirW,
+        torch.Tensor(train_data["node"]["Light"]["transform"])
+    )
+    refelctPosL, reflectDirL = transform_rays_world_to_local(
+        reflectPosW,
+        reflectDirW,
+        torch.Tensor(train_data["node"]["Light"]["transform"])
+    )
+    
+    first_uvi = chunk_process(
+        impostor,
+        rayDir_local,
+        rayPos_local,
+        W=W,
+        H=H,
+        chunk=512 * 512 // 8   # 可根据显存调整
+    )
+    reflect_uvi = chunk_process(
+        impostor,
+        reflectDirL,
+        refelctPosL,
+        W=W,
+        H=H,
+        chunk=512 * 512 // 8   # 可根据显存调整
+        )
+    
+
+def GN(ch: int, groups: int = 16) -> nn.GroupNorm:
+    g = min(groups, ch)
+    while ch % g != 0:
+        g -= 1
+    return nn.GroupNorm(g, ch)
+
+
+class ResidualBlockGN(nn.Module):
+    def __init__(self, ch: int, dilation: int = 1, groups: int = 16):
+        super().__init__()
+        self.conv1 = nn.Conv2d(ch, ch, 3, 1, padding=dilation, dilation=dilation, bias=False)
+        self.gn1 = GN(ch, groups)
+        self.conv2 = nn.Conv2d(ch, ch, 3, 1, padding=dilation, dilation=dilation, bias=False)
+        self.gn2 = GN(ch, groups)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        h = self.conv1(x)
+        h = F.relu(self.gn1(h), inplace=True)
+        h = self.conv2(h)
+        h = self.gn2(h)
+        return F.relu(x + h, inplace=True)
+
+
+class TextureEncoderDilated_NoBN(nn.Module):
+    """
+    输入:  (B, C, H, W)
+    输出:  (B, D, H, W)
+    不用 BN；用 dilation 扩大感受野（适合阴影/间接光这种大范围效应）。
+    """
+    def __init__(self, in_ch: int = 3, base_dim: int = 64, out_dim: int = 128, groups: int = 16):
+        super().__init__()
+        self.stem = nn.Sequential(
+            nn.Conv2d(in_ch, base_dim, 3, 1, 1, bias=False),
+            GN(base_dim, groups),
+            nn.ReLU(inplace=True),
+        )
+
+        dils = [1, 2, 4, 8, 4, 2]
+        self.body = nn.Sequential(*[ResidualBlockGN(base_dim, dilation=d, groups=groups) for d in dils])
+
+        self.head = nn.Sequential(
+            nn.Conv2d(base_dim, out_dim, 1, 1, 0, bias=True),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.stem(x)
+        x = self.body(x)
+        return self.head(x)
+    
+
+class ImageDecoder(nn.Module):
+    """
+    输入:  (B, C, H, W)
+    输出:  (B, D, H, W)
+    不用 BN；用 dilation 扩大感受野（适合阴影/间接光这种大范围效应）。
+    """
+    def __init__(self, in_ch, base_dim):
+        super().__init__()
+        self.decoder = nn.Sequential(
+            nn.Linear(in_ch, base_dim),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(base_dim, base_dim),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(base_dim, base_dim),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(base_dim, base_dim),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(base_dim, 3),
+            nn.LeakyReLU(inplace=True)
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.decoder(x)
+        return x
+    
+    
+class PixelMultiheadAttention(nn.Module):
+    """
+    Treat each pixel as a batch element:
+      Q: (N, 1, D)
+      K: (N, Lk, D)
+      V: (N, Lk, Dv)  (usually Dv=D)
+    Output:
+      out: (N, 1, D)
+    """
+    def __init__(self, embed_dim: int = 128, num_heads: int = 8, dropout: float = 0.0):
+        super().__init__()
+        self.mha = nn.MultiheadAttention(
+            embed_dim=embed_dim,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True,  # IMPORTANT: expects (B, L, E)
+        )
+
+    def forward(self, Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor, need_weights: bool = False):
+        """
+        Q: (N, 1, D)
+        K: (N, 3, D)
+        V: (N, 3, D)
+        """
+        out, attn_w = self.mha(Q, K, V, need_weights=need_weights, average_attn_weights=True)
+        # out: (N, 1, D)
+        if need_weights:
+            # attn_w: (N, 1, 3)  (average over heads)
+            return out, attn_w
+        return out
+    
+
+class PixelMultiheadAttention(nn.Module):
+    """
+    Treat each pixel as a batch element:
+      Q: (N, 1, D)
+      K: (N, Lk, D)
+      V: (N, Lk, Dv)  (usually Dv=D)
+    Output:
+      out: (N, 1, D)
+    """
+    def __init__(self, embed_dim: int = 128, num_heads: int = 8, dropout: float = 0.0):
+        super().__init__()
+        self.mha = nn.MultiheadAttention(
+            embed_dim=embed_dim,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True,  # IMPORTANT: expects (B, L, E)
+        )
+
+    def forward(self, Q: torch.Tensor, K: torch.Tensor, V: torch.Tensor, need_weights: bool = False):
+        """
+        Q: (N, 1, D)
+        K: (N, 3, D)
+        V: (N, 3, D)
+        """
+        out, attn_w = self.mha(Q, K, V, need_weights=need_weights, average_attn_weights=True)
+        # out: (N, 1, D)
+        if need_weights:
+            # attn_w: (N, 1, 3)  (average over heads)
+            return out, attn_w
+        return out
+    
+
+class ConeEncoder(nn.Module):
+    """
+    Treat each pixel as a batch element:
+      Q: (N, 1, D)
+      K: (N, Lk, D)
+      V: (N, Lk, Dv)  (usually Dv=D)
+    Output:
+      out: (N, 1, D)
+    """
+    def __init__(self, input_dim=9, embed_dim: int = 128):
+        super().__init__()
+        self.ConeEncoder = nn.Sequential(
+            nn.Linear(input_dim, embed_dim),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(embed_dim, embed_dim),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(embed_dim, embed_dim)
+        )
+
+    def forward(self, x):
+        """
+        Q: (N, 1, D)
+        K: (N, 3, D)
+        V: (N, 3, D)
+        """
+
+        return self.ConeEncoder(x)
+    
+class ViewGeometryEncoder(nn.Module):
+    """
+    Treat each pixel as a batch element:
+      Q: (N, 1, D)
+      K: (N, Lk, D)
+      V: (N, Lk, Dv)  (usually Dv=D)
+    Output:
+      out: (N, 1, D)
+    """
+    def __init__(self, input_dim=9, embed_dim: int = 128):
+        super().__init__()
+        self.ConeEncoder = nn.Sequential(
+            nn.Linear(input_dim, embed_dim),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(embed_dim, embed_dim),
+            nn.LeakyReLU(inplace=True),
+            nn.Linear(embed_dim, embed_dim)
+        )
+
+    def forward(self, x):
+        """
+        Q: (N, 1, D)
+        K: (N, 3, D)
+        V: (N, 3, D)
+        """
+
+        return self.ConeEncoder(x)
+    
+
+class MLP15to3Softmax(nn.Module):
+    """
+    Input:  (B, 15) or (..., 15)
+    Output: (B, 3)  or (..., 3) with softmax normalization (sum to 1).
+    """
+    def __init__(
+        self,
+        hidden_dims=(128, 128, 64, 64),
+        negative_slope: float = 0.2,
+        dropout: float = 0.0,
+    ):
+        super().__init__()
+        layers = []
+        in_dim = 15
+        for h in hidden_dims:
+            layers.append(nn.Linear(in_dim, h))
+            layers.append(nn.LeakyReLU(negative_slope=negative_slope, inplace=True))
+            if dropout > 0:
+                layers.append(nn.Dropout(dropout))
+            in_dim = h
+
+        layers.append(nn.Linear(in_dim, 3))
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        logits = self.net(x)
+        return F.softmax(logits, dim=-1)
+    
+class ResidualConvBlock(nn.Module):
+    def __init__(self, ch):
+        super().__init__()
+        self.norm = nn.GroupNorm(8, ch)  # 比 BN 稳定
+        self.conv1 = nn.Conv2d(ch, ch, 3, padding=1)
+        self.act = nn.GELU()
+        self.conv2 = nn.Conv2d(ch, ch, 3, padding=1)
+
+    def forward(self, x):
+        identity = x
+        #x = self.norm(x)
+        x = self.conv1(x)
+        x = self.act(x)
+        x = self.conv2(x)
+        return x + identity
+    
+class MeanDownsample(nn.Module):
+    def __init__(self, ch):
+        super().__init__()
+        self.pool = nn.AvgPool2d(4, stride=4)
+        self.conv = nn.Conv2d(ch, ch, 3, padding=1)
+
+    def forward(self, x):
+        x = self.pool(x)
+        x = self.conv(x)
+        return x
+    
+class MultiScaleImageEncoder(nn.Module):
+    def __init__(self, in_ch=3, base_ch=64):
+        super().__init__()
+
+        # stem
+        self.stem = nn.Sequential(
+            nn.Conv2d(in_ch, base_ch,3,  padding=1),
+            nn.GELU(),
+            nn.Conv2d(base_ch, base_ch, 3, padding=1),
+        )
+
+        # stage 0
+        self.stage0 = nn.Sequential(
+            ResidualConvBlock(base_ch),
+            ResidualConvBlock(base_ch),
+            ResidualConvBlock(base_ch),
+        )
+        self.out0 = nn.Sequential(
+            nn.Conv2d(base_ch, base_ch, 1)
+        )
+
+        # stage 1
+        self.down1 = MeanDownsample(base_ch)
+        self.stage1 = nn.Sequential(
+            ResidualConvBlock(base_ch),
+            ResidualConvBlock(base_ch),
+        )
+        self.out2 = nn.Sequential(
+            nn.GroupNorm(8, base_ch),
+            nn.Conv2d(base_ch, base_ch, 1)
+        )
+
+        # stage 2
+        self.down2 = MeanDownsample(base_ch)
+        self.stage2 = nn.Sequential(
+            ResidualConvBlock(base_ch),
+            ResidualConvBlock(base_ch),
+        )
+        self.out4 = nn.Sequential(
+            nn.GroupNorm(8, base_ch),
+            nn.Conv2d(base_ch, base_ch, 1)
+        )
+
+        # stage 3
+        self.down3 = MeanDownsample(base_ch)
+        self.stage3 = ResidualConvBlock(base_ch)
+        self.out8 = nn.Sequential(
+            nn.GroupNorm(8, base_ch),
+            nn.Conv2d(base_ch, base_ch, 1)
+        )
+
+    def forward(self, x):
+        """
+        x: (B, W, H, C)
+        """
+        # BWHC → BCHW
+        x = x.permute(0, 3, 2, 1).contiguous()
+
+        x = self.stem(x)
+
+        # I↓0
+        x0 = self.stage0(x)
+        I0 = self.out0(x0)
+
+        # I↓2
+        x = self.down1(x0)
+        x = self.stage1(x)
+        I2 = self.out2(x)
+
+        # I↓4
+        x = self.down2(x)
+        x = self.stage2(x)
+        I4 = self.out4(x)
+
+        # I↓8
+        x = self.down3(x)
+        x = self.stage3(x)
+        I8 = self.out8(x)
+
+        return {
+            "I0": I0,
+            "I2": I2,
+            "I4": I4,
+            "I8": I8,
+        }

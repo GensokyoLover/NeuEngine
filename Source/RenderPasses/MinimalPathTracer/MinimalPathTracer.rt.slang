@@ -82,6 +82,7 @@ RWTexture2D<float4> gSpecular;
 RWTexture2D<float4> gNormal;
 RWTexture2D<float> gRoughness;
 RWTexture2D<float4> gDepth;
+RWTexture2D<float4> gMinDepth;
 RWTexture2D<float4> gEmissive;
 RWTexture2D<float4> gView;
 RWTexture2D<float4> gRayPos;
@@ -418,9 +419,13 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim)
     if (gFrameCount == 0) {
         gDepth[pixel].r = 10;
         gDepth[pixel].g = -10;
+        gDepth[pixel].b = 1000;
+        gMinDepth[DispatchRaysIndex().xy].rgb = 1000;
+ 
     }
     gView[DispatchRaysIndex().xy] = float4(-primaryRayDir, 1);
     gRayPos[DispatchRaysIndex().xy] = float4(primaryRayOrigin, 1);
+    gDepth[DispatchRaysIndex().xy].w = gDepth[DispatchRaysIndex().xy].w + 1;
     if (hit.isValid())
     {
         // Pixel represents a valid primary hit. Compute its contribution.
@@ -466,10 +471,12 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim)
 
         // Prepare ray payload.
         ScatterRayData rayData = ScatterRayData(sg);
+        ScatterRayData rayReflectData = ScatterRayData(sg);
 
         // Generate scatter ray.
         if (!generateScatterRay(sd, mi, isCurveHit, rayOrigin, rayData))
             rayData.terminated = true;
+        
         BSDFProperties brdf = mi.getProperties(sd);
         gPosition[pixel] = float4(sd.posW, 1.f);
         uint3 gridDim = uint3(16, 16, 16);
@@ -491,12 +498,52 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim)
 
         gDepth[DispatchRaysIndex().xy].r = min(depth, gDepth[DispatchRaysIndex().xy].r);
         gDepth[DispatchRaysIndex().xy].g = max(depth, gDepth[DispatchRaysIndex().xy].g);
+        rayReflectData.origin = rayOrigin;
+        rayReflectData.direction = reflect(primaryRayDir, brdf.guideNormal);
+        rayReflectData.thp = 1;
+        float roughness = saturate(brdf.roughness);
+        float alpha = roughness * roughness;
+
+        float coneHalfAngle = atan(alpha * sqrt(99.0));
+        float coneu = sampleNext1D(sg);
+        float conev = sampleNext1D(sg);
+        float cosTheta = lerp(1.0, cos(coneHalfAngle), coneu);
+        float sinTheta = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
+
+        float phi = 2.0 * 3.1415926 * conev;
+
+        float3 localDir = float3(
+            cos(phi) * sinTheta,
+            sin(phi) * sinTheta,
+            cosTheta
+        );
+        float3 R = normalize(rayReflectData.direction);
+
+        // robust tangent frame
+        float3 up = abs(R.z) < 0.999 ? float3(0, 0, 1) : float3(1, 0, 0);
+        float3 T = normalize(cross(up, R));
+        float3 B = cross(R, T);
+        float3 sampledDir =
+            localDir.x * T
+            + localDir.y * B
+            + localDir.z * R;
+
+        rayReflectData.direction = normalize(sampledDir);
+        traceScatterRay(rayReflectData);
+       // gMinDepth[DispatchRaysIndex().xy].rgb = rayReflectData.pathLength;
+        if (rayReflectData.pathLength == 1)
+            gMinDepth[DispatchRaysIndex().xy].rgb =  min(length(rayReflectData.origin - sd.posW), gMinDepth[DispatchRaysIndex().xy].r);
+        gDepth[DispatchRaysIndex().xy].b = min(length(rayReflectData.origin - sd.posW), gDepth[DispatchRaysIndex().xy].b);
+        
         //gDepth[DispatchRaysIndex().xy] = gScene.camera.data.frameWidth;
         for (uint depth = 0; depth <= kMaxBounces && !rayData.terminated; depth++)
         {
             // Trace scatter ray. If it hits geometry, the closest hit shader samples
             // direct illumination and generates the next scatter ray.
             traceScatterRay(rayData);
+            // if (rayData.pathLength == 1) {
+            //     gDepth[DispatchRaysIndex().xy].b = min(length(rayData.origin - sd.posW),gDepth[DispatchRaysIndex().xy].b);
+            // }
         }
 
         // Store contribution from scatter ray.
@@ -505,6 +552,7 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim)
     else
     {
         // Background pixel.
+        //gMinDepth[DispatchRaysIndex().xy].rgb = 0;
         outColor = kUseEnvBackground ? gScene.envMap.eval(primaryRayDir) : kDefaultBackgroundColor;
         gPosition[DispatchRaysIndex().xy] = float4(0);
         // Follow path into the scene and compute its total contribution.

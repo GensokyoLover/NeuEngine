@@ -476,7 +476,7 @@ void SampleApp::renderFrame()
     mFrameRate.newFrame();
 
     RenderContext* pRenderContext = mpDevice->getRenderContext();
-
+    //pRenderContext->gframeCount = mFrameRate.getFrameCount();
     // Render a frame.
     // If the renderer is paused, create a copy of the rendered output and copy that back each frame.
     if (mRendererPaused && mpPausedRenderOutput)

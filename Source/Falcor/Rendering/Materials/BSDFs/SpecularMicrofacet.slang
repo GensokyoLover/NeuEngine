@@ -37,7 +37,7 @@ __exported import Rendering.Materials.IBSDF;
 
 // Enable GGX sampling using the distribution of visible normals (VNDF) instead of classic NDF sampling.
 // This should be the default as it has lower variance, disable for testing only.
-#define EnableVNDFSampling 1
+#define EnableVNDFSampling 0
 
 // Enable explicitly computing sampling weights using eval(wi, wo) / evalPdf(wi, wo).
 // This is for testing only, as many terms of the equation cancel out allowing to save on computation.

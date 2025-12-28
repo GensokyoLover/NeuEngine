@@ -3,7 +3,9 @@ from falcor import *
 def render_graph_MinimalPathTracer():
     g = RenderGraph("MinimalPathTracer")
     AccumulatePass = createPass("AccumulatePass", {'enabled': True, 'precisionMode': 'Single'})
+    AccumulatePass2 = createPass("AccumulatePass", {'enabled': True, 'precisionMode': 'Single'})
     g.addPass(AccumulatePass, "AccumulatePass")
+    g.addPass(AccumulatePass2, "AccumulatePass2")
     ToneMapper = createPass("ToneMapper", {'autoExposure': False, 'exposureCompensation': 0.0})
     g.addPass(ToneMapper, "ToneMapper")
     MinimalPathTracer = createPass("MinimalPathTracer", {'maxBounces': 3})
@@ -14,8 +16,10 @@ def render_graph_MinimalPathTracer():
     g.addEdge("VBufferRT.vbuffer", "MinimalPathTracer.vbuffer")
     g.addEdge("VBufferRT.viewW", "MinimalPathTracer.viewW")
     g.addEdge("MinimalPathTracer.color", "AccumulatePass.input")
+    g.addEdge("MinimalPathTracer.mind", "AccumulatePass2.input")
     g.markOutput("ToneMapper.dst")
     g.markOutput("MinimalPathTracer.emission")
+    g.markOutput("MinimalPathTracer.mind")
     return g
 
 MinimalPathTracer = render_graph_MinimalPathTracer()
