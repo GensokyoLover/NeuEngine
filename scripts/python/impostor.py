@@ -1582,7 +1582,7 @@ def group_by_view_triplet_with_roughness_fast(sample, max_view=65535, max_rbin=2
         return {}
 
     # 取 triplet 和 rbin
-    triplets = reflect_uvi[valid_idx, :, 2].long()    # (M,3)
+    triplets = reflect_uvi.reshape(-1,3,3)[valid_idx, :, 2].long()    # (M,3)
     rbin = compute_roughness_bin(roughness)[valid_idx].long()  # (M,)
 
     # -------- pack key to int64: [i0 | i1 | i2 | rbin] -------
@@ -1794,7 +1794,7 @@ def dataset_process(path,impostor,test=False):
 
             sample[key] = torch.Tensor(data).cuda()  # shape: (H,W,C)
         #pyexr.write("H:/Falcor/media/inv_rendering_scenes/object_level_config/Bunny/{}roughness.exr".format(scene_id),sample["roughness"].cpu().numpy())
-        sample["mask"] = (sample["position"].sum(dim=-1,keepdim=True)!=0) & (sample["roughness"] < 0.0001) & (sample["normal"][...,2:3]<0.1) & (sample["mind"] != 1000)
+        sample["mask"] = (sample["position"].sum(dim=-1,keepdim=True)!=0) & (sample["roughness"] > 0.0001) & (sample["normal"][...,2:3]<0.1) & (sample["mind"] != 1000)
         #sample["mask"] = (sample["position"].sum(dim=-1,keepdim=True)!=0) & (sample["roughness"] > 0.0001) & (sample["normal"][...,2:3]<0.1)
         if sample["mask"].sum() < 1:
             print("continue ",scene_id)
@@ -1830,6 +1830,7 @@ def dataset_process(path,impostor,test=False):
         cone_radius = cone_radius_deg(sample["mind"].reshape(-1,1) / 0.8,half_angle_deg.reshape(-1,1))
         reference_pos2 = refelctPosL + reflectDirL * (sample["mind"].reshape(-1,1) / 0.8 +  cone_radius)
         sample["referencePosL"] = (refelctPosL + reflectDirL * sample["mind"].reshape(-1,1) / 0.8).reshape(512,512,3)
+        sample["referencePosL2"] = reference_pos2.reshape(512,512,3)
         torch.cuda.synchronize()
         t0 = time.perf_counter()
         first_uvi,_ = chunk_process(impostor, rayDir_local, rayPos_local, W=W, H=H, chunk=512*512//8)
@@ -1850,10 +1851,10 @@ def dataset_process(path,impostor,test=False):
         reference_uvi2,_ =  chunk_process(impostor, reflectDirL, refelctPosL, W=W, H=H, chunk=512*512//8 ,reference_pos=reference_pos2)
         sample["reference_uvi"] = reference_uvi.reshape(512,512,3,3)
         sample["reference_uvi2"] = reference_uvi2.reshape(512,512,3,3)
-        for i in range(3):
-            pyexr.write("./reflect_uvi_{}.exr".format(i),reflect_uvi[:,i,:].reshape(512,512,3).cpu().numpy())
-            pyexr.write("./reference_uvi_{}.exr".format(i),reference_uvi[:,i,:].reshape(512,512,3).cpu().numpy())
-            pyexr.write("./reference_uvi2_{}.exr".format(i),reference_uvi2[:,i,:].reshape(512,512,3).cpu().numpy())
+        # for i in range(3):
+        #     pyexr.write("./reflect_uvi_{}.exr".format(i),reflect_uvi[:,i,:].reshape(512,512,3).cpu().numpy())
+        #     pyexr.write("./reference_uvi_{}.exr".format(i),reference_uvi[:,i,:].reshape(512,512,3).cpu().numpy())
+        #     pyexr.write("./reference_uvi2_{}.exr".format(i),reference_uvi2[:,i,:].reshape(512,512,3).cpu().numpy())
         N = rayDir_local.shape[0]
         out_uvi = []
         # for i in range(0, N, 64):
@@ -2443,7 +2444,7 @@ class ResidualConvBlock(nn.Module):
 
     def forward(self, x):
         identity = x
-        #x = self.norm(x)
+        x = self.norm(x)
         x = self.conv1(x)
         x = self.act(x)
         x = self.conv2(x)
