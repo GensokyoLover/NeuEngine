@@ -1044,7 +1044,7 @@ def sampleImpostorDebugPixel(
 
 
 def load_impostor(name,level):
-    path = r"H:\Falcor\media\inv_rendering_scenes\object_level_config/{}level{}/".format(name,level)
+    path = r"H:\Falcor\media\inv_rendering_scenes\object_level_config_test/{}level{}/".format(name,level)
     impostor = ImpostorPT()
     with open(path + "basic_info.json","r") as file:
         basic_info = json.load(file)
@@ -1071,20 +1071,24 @@ def load_impostor(name,level):
     # 读取 lookup_uint16.png,用opencv读取
     texFaceIndex = cv2.imread(path + "lookup_uint16.png", cv2.IMREAD_UNCHANGED)
     impostor.texFaceIndex = torch.tensor(texFaceIndex, dtype=torch.int32).cuda()
-    file_list = os.listdir(path)
+    subdirs = [
+        name for name in os.listdir(path)
+        if os.path.isdir(os.path.join(path, name))
+    ]
     impostor.texDict = {}
     for key in ["albedo","specular","depth","emission","normal","position","roughness","view","raypos"]:
         impostor.texDict[key] = torch.zeros((512,512,42,buffer_channel[key])).cuda()
-    for file in file_list:
-        if file.split(".")[-1] != "exr":
-            continue
-        name = file.split("_")[0]
-        id = int(file.split("_")[1].split(".")[0])
-        impostor.texDict[name][:,:,id,:] = torch.Tensor(pyexr.read(path + file)[:,:,:buffer_channel[name]]).cuda()
+    for file in subdirs:
+        for name in ["albedo","specular","depth","emission","normal","position","roughness","view","raypos"]:
+            id = int(file)
+            
+            image_path = path + file + "/" + name + f"_{id:05d}.exr"
+            impostor.texDict[name][:,:,id,:] = torch.Tensor(pyexr.read(image_path)[:,:,:buffer_channel[name]]).cuda()
+
     return impostor
 
 def load_impostor2(name,level):
-    path = r"H:\Falcor\media\inv_rendering_scenes\object_level_config/{}level{}/".format(name,level)
+    path = r"H:\Falcor\media\inv_rendering_scenes\object_level_config_test/{}level{}/".format(name,level)
     impostor = ImpostorPT()
     with open(path + "basic_info.json","r") as file:
         basic_info = json.load(file)
@@ -1115,12 +1119,16 @@ def load_impostor2(name,level):
     impostor.texDict = {}
     for key in ["albedo","specular","depth","emission","normal","position","roughness","view","raypos"]:
         impostor.texDict[key] = torch.zeros((42,512,512,buffer_channel[key])).cuda()
-    for file in file_list:
-        if file.split(".")[-1] != "exr":
-            continue
-        name = file.split("_")[0]
-        id = int(file.split("_")[1].split(".")[0])
-        impostor.texDict[name][id,:,:,:] = torch.Tensor(pyexr.read(path + file)[:,:,:buffer_channel[name]]).cuda()
+    subdirs = [
+        name for name in os.listdir(path)
+        if os.path.isdir(os.path.join(path, name))
+    ]
+    for file in subdirs:
+        for name in ["albedo","specular","depth","emission","normal","position","roughness","view","raypos"]:
+            id = int(file)
+            
+            image_path = path + file + "/" + name + f"_{id:05d}.exr"
+            impostor.texDict[name][id,:,:,:] = torch.Tensor(pyexr.read(image_path)[:,:,:buffer_channel[name]]).cuda()
     return impostor
 def invert_matrix_4x4(M):
     return torch.inverse(M)
@@ -1794,7 +1802,7 @@ def dataset_process(path,impostor,test=False):
 
             sample[key] = torch.Tensor(data).cuda()  # shape: (H,W,C)
         #pyexr.write("H:/Falcor/media/inv_rendering_scenes/object_level_config/Bunny/{}roughness.exr".format(scene_id),sample["roughness"].cpu().numpy())
-        sample["mask"] = (sample["position"].sum(dim=-1,keepdim=True)!=0) & (sample["roughness"] > 0.0001) & (sample["normal"][...,2:3]<0.1) & (sample["mind"] != 1000)
+        sample["mask"] = (sample["position"].sum(dim=-1,keepdim=True)!=0) & (sample["roughness"] < 0.0001) & (sample["normal"][...,2:3]<0.1) & (sample["mind"] != 1000)
         #sample["mask"] = (sample["position"].sum(dim=-1,keepdim=True)!=0) & (sample["roughness"] > 0.0001) & (sample["normal"][...,2:3]<0.1)
         if sample["mask"].sum() < 1:
             print("continue ",scene_id)
@@ -1885,6 +1893,7 @@ def dataset_process(path,impostor,test=False):
         mask = sphere_covers_cone(pos,dir,halfRadius,torch.Tensor([impostor.radius]).cuda())
         sample["mask"] = sample["mask"] & mask.reshape(512,512,1)
         if test:
+            ensure_dir(os.path.join(path,"test"))
             fn = f"{cnt}.pkl.zst"
             full_path = os.path.join(path,"test", fn)
 

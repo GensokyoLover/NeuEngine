@@ -405,48 +405,53 @@ def find_most_similar_image(target_image_path, image_dir):
 import torch.nn.functional as F
 
 
-def sample_by_uvi_bilinear_align_false(images, uvi):
+def sample_by_uvi_bilinear_align_false(images, uvi,mode="bilinear"):
     """
     images: [N, H, W, 3]
     uvi:    [1, H, W, 3]  (u, v, i)
     return: [1, H, W, 3]
     """
     device = images.device
-    N, H, W, C = images.shape
-
+    N, _, _, C = images.shape
+    _, H, W, _,_ = uvi.shape
     # NHWC -> NCHW
     images = images.permute(0, 3, 1, 2)   # [N,3,H,W]
-
+    out_list = []
     # 拆 uvi
-    uv = uvi[..., 0:2]                    # [1,H,W,2]
-    idx = uvi[..., 2].long()              # [1,H,W]
+    for refer in range(3):
+        uv = uvi[...,refer,0:2]
+        idx = uvi[...,refer,2].long()
+   
 
     # grid_sample 使用 [-1,1]，align_corners=False
-    grid = uv * 2.0 - 1.0                 # [1,H,W,2]
+        grid = uv 
 
-    # 输出
-    out = torch.zeros(1, C, H, W, device=device)
+        # 输出
+        out = torch.zeros(1, C, H, W, device=device)
 
-    # 逐 image index 采样（42 次是安全的）
-    for i in range(N):
-        mask = (idx == i)                 # [1,H,W]
-        if not mask.any():
-            continue
+        # 逐 image index 采样（42 次是安全的）
+        for i in range(N):
+            mask = (idx == i)                 # [1,H,W]
+            if not mask.any():
+                continue
 
-        # grid_sample
-        sampled = F.grid_sample(
-            images[i:i+1],                # [1,3,H,W]
-            grid,                          # [1,H,W,2]
-            mode="bilinear",
-            padding_mode="zeros",
-            align_corners=False
-        )
+            # grid_sample
+            sampled = F.grid_sample(
+                images[i:i+1],                # [1,3,H,W]
+                grid,                          # [1,H,W,2]
+                mode=mode,
+                padding_mode="zeros",
+                align_corners=False
+            )
 
-        # 只保留属于当前 i 的像素
-        out += sampled * mask.unsqueeze(1)
-
+            # 只保留属于当前 i 的像素
+        
+            out += sampled * mask.unsqueeze(1)
+        out_list.append(out)
+    out = torch.cat(out_list, dim=0)
     # NCHW -> NHWC
     return out.permute(0, 2, 3, 1)
+
 
 
 def relative_cylinder_encoding_with_axis(
@@ -492,6 +497,56 @@ def mean_downsample_pool(x, b):
     
     # back to (B, H//b, W//b, 1)
     return x.permute(0, 2, 3, 1)
+
+def save_checkpoint(
+    path,
+    epoch,
+    global_step,
+    emissive_encoder,
+    geo_encoder,
+    image_decoder,
+    image_decoder2,
+    mlp_weight
+):
+    ckpt = {
+        "epoch": epoch,
+        "global_step": global_step,
+
+        "emissive_encoder": emissive_encoder.state_dict(),
+        "geo_encoder": geo_encoder.state_dict(),
+        "image_decoder": image_decoder.state_dict(),
+        "image_decoder2": image_decoder2.state_dict(),
+        "mlp_weight": mlp_weight.state_dict()
+    }
+    torch.save(ckpt, path)
+    print(f"[Checkpoint] Saved to {path}")
+
+def load_checkpoint(
+    path,
+    emissive_encoder,
+    geo_encoder,
+    image_decoder,
+    image_decoder2,
+    mlp_weight,
+    optimizer=None,
+    strict=True,
+):
+    ckpt = torch.load(path, map_location="cuda")
+
+    emissive_encoder.load_state_dict(ckpt["emissive_encoder"], strict=strict)
+    geo_encoder.load_state_dict(ckpt["geo_encoder"], strict=strict)
+    image_decoder.load_state_dict(ckpt["image_decoder"], strict=strict)
+    image_decoder2.load_state_dict(ckpt["image_decoder2"], strict=strict)
+    mlp_weight.load_state_dict(ckpt["mlp_weight"], strict=strict)
+
+    if optimizer is not None and "optimizer" in ckpt:
+        optimizer.load_state_dict(ckpt["optimizer"])
+
+    epoch = ckpt.get("epoch", 0)
+    global_step = ckpt.get("global_step", 0)
+
+    print(f"[Checkpoint] Loaded from {path} (epoch={epoch}, step={global_step})")
+    return epoch, global_step
 if __name__ == "__main__":
     img0 = (np.random.rand(512, 512, 3) * 255).astype(np.uint8)
     img1 = (np.random.rand(512, 512, 3) * 255).astype(np.uint8)

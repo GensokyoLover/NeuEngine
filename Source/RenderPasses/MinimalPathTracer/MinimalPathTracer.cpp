@@ -185,7 +185,7 @@ void MinimalPathTracer::execute(RenderContext* pRenderContext, const RenderData&
     // Set constants.
     auto var = mTracer.pVars->getRootVar();
     var["CB"]["gFrameCount"] = pRenderContext->gframeCount;
-    printf("frame %d\n", pRenderContext->gframeCount);
+   // printf("frame %d\n", pRenderContext->gframeCount);
     var["CB"]["gPRNGDimension"] = dict.keyExists(kRenderPassPRNGDimension) ? dict[kRenderPassPRNGDimension] : 0u;
 
     // Bind I/O buffers. These needs to be done per-frame as the buffers may change anytime.

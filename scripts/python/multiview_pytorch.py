@@ -87,17 +87,8 @@ def worker_process(worker_id, resolution, scene_path,
     testbed.load_scene(scene_path)
 
     scene = testbed.scene
-    a = f3_to_numpy(scene.bounds.min_point)
-    b = f3_to_numpy(scene.bounds.max_point)
-    centor,object_radius,o_radius,p_radius = sampling_radii_from_aabb(a,b)
-    final_resolution = resolution
     testbed.scene.camera.focalLength = 0
     testbed.scene.camera.nearPlane = 0.001
-    testbed.scene.add_impostor()
-    base = 1
-    basic_info = {}
-    basic_info["radius"] = o_radius
-    basic_info["centorWS"] = centor.tolist()
     # Worker 主循环：一直等待任务
     while True:
         task = task_queue.get()
@@ -106,26 +97,19 @@ def worker_process(worker_id, resolution, scene_path,
             print(f"[Worker {worker_id}] Stopping.")
             break
 
-        i, output_path = task  # task payload
-        level_output_path = output_path + f"{i}/"
+        i, output_path, basic_info = task  # task payload
+        print("process:",i)
+        level_output_path = output_path
         os.makedirs(level_output_path, exist_ok=True)
 
 
-        print(r)
-        testbed.scene.set_roughness("Wall", 0)
+ 
 
         cam = testbed.scene.camera
-        cam.position = np.random.uniform(-0.3, 0.3, size=[3]) + np.array([0.0, 0.25, 1.2])
-        cam.target = np.array([0.0, -0.5, 0.0]) + np.random.uniform(-0.3, 0.3, size=[3])
-        node_list = testbed.scene.get_scene_graph()
-        node_dict = {}
-        for node in node_list:
-            node_dict[node["name"]] = node
-        print(node_dict["Light"]["transform"])
-        camera_data ={}
-        camera_data["position"] = list(f3_to_numpy( testbed.scene.camera.position))
-        camera_data["forward"] = list(normalize(f3_to_numpy( testbed.scene.camera.target) - f3_to_numpy( testbed.scene.camera.position)))
-        # Run render
+        cam.position = np.array(basic_info["camera_position"])
+        cam.target =np.array(basic_info["camera_target"])
+        cam.up = np.array(basic_info["camera_up"])
+      
         testbed.run()
 
         for name in select_list:
@@ -135,11 +119,6 @@ def worker_process(worker_id, resolution, scene_path,
                 index
             )
 
-        print(f"[Worker {worker_id}] Finished frame {i}")
-        with open(level_output_path + "node.json","w") as f:
-            json.dump(node_dict, f, indent=4, ensure_ascii=False)
-        with open(level_output_path + "camera.json","w") as f:
-            json.dump(camera_data, f, indent=4, ensure_ascii=False)
 
 def compute_obj_bounding_box(obj_path):
     vertices = []
@@ -186,7 +165,7 @@ def save_compressed_pickle(data, file_path):
 
 object_data_list = ["color","position","albedo","specular","normal","roughness","depth","AccumulatePassoutput","emission","view","raypos"]
 object_key_dict = {name: i for i, name in enumerate(object_data_list)}
-sellect_list = ["depth","view","raypos"]
+sellect_list = ["color","position","albedo","specular","normal","roughness","depth","AccumulatePassoutput","emission","view","raypos"]
 #object_data_list = ["color","position","albedo","specular","normal","roughness","depth","AccumulatePassoutput"]
 def pack_object_data(path,camera_resolution,direction_resolution):
     data = {}
@@ -233,7 +212,7 @@ def convert_exr_to_rgba(input_dir, output_dir):
         except Exception as e:
             print(f"[Error] {fname}: {e}")
 
-
+import copy
 def main():
     # get_bounding_box(r'E:\TOG\Falcor\media\test_scenes\meshes\bunny_centered.obj')
     # exit()
@@ -244,10 +223,12 @@ def main():
     # pyexr.write("./lookup.exr",lookup_loaded)
 
     finest_resolution = 512
-    folder_path = r"H:\Falcor\media\inv_rendering_scenes\object_level_config/"
+    folder_path = r"H:\Falcor\media\inv_rendering_scenes\object_level_config_test/"
     file_list = os.listdir(r"H:\Falcor\media\inv_rendering_scenes\object_level_config/")
     for file in file_list: 
         if file.split(".")[-1] != "pyscene":
+            continue
+        if file=="Light.pyscene":
             continue
         # if (file.split(".")[0] + "level3") in file_list:
         #     continue
@@ -260,13 +241,14 @@ def main():
         testbed = falcor.Testbed(width=finest_resolution, height=finest_resolution, create_window=False, device=device,spp=16)
         render_graph_MinimalPathTracer(testbed)
     
-        generate_impostor_by_falcor(finest_resolution,testbed,scene_path,output_folder,object_key_dict,sellect_list)
+        #generate_impostor_by_falcor(finest_resolution,testbed,scene_path,output_folder,object_key_dict,sellect_list)
         # start_render_farm(finest_resolution,testbed,scene_path,output_folder,object_key_dict,sellect_list)
         task_queue = mp.Queue()
-
+        testbed.load_scene(scene_path)
+        scene = testbed.scene
         # 启动 Worker
         workers = []
-        for wid in range(8):
+        for wid in range(16):
             p = mp.Process(
                 target=worker_process,
                 args=(wid, 512, scene_path,
@@ -276,122 +258,116 @@ def main():
             p.start()
             workers.append(p)
         a = f3_to_numpy(scene.bounds.min_point)
-    b = f3_to_numpy(scene.bounds.max_point)
-    centor,object_radius,o_radius,p_radius = sampling_radii_from_aabb(a,b)
-    final_resolution = resolution
-    testbed.scene.camera.focalLength = 0
-    testbed.scene.camera.nearPlane = 0.001
-    testbed.scene.add_impostor()
-    base = 1
-    basic_info = {}
-    basic_info["radius"] = o_radius
-    basic_info["centorWS"] = centor.tolist()
-    
-    for subdiv_level in range(1,6):
-        level_resolution = final_resolution
-        testbed.resize_frame_buffer(level_resolution,level_resolution)
-        basic_info["level"] = subdiv_level
-        basic_info["texDim"] = [level_resolution,level_resolution]
-        basic_info["invTexDim"] = [1/(level_resolution),1/(level_resolution)] 
-        basic_info["baseCameraResolution"] = 2048
+        b = f3_to_numpy(scene.bounds.max_point)
+        centor,object_radius,o_radius,p_radius = sampling_radii_from_aabb(a,b)
 
-        level_output_path = output_path + "level{}/".format(subdiv_level)
-        if not os.path.exists(level_output_path):
-            os.makedirs(level_output_path)
-
-        verts, faces = geodesic_impostor_mesh(subdiv_level)
-        faces_list = faces.tolist()  
-        #lookup_table = build_lookup_texture(verts,faces,resolution=128)
-        lookup_table = build_lookup_texture_speedup_chunk(verts,faces,resolution=2048,chunk_size=512)
-        #lookup_table2 = build_lookup_texture_speedup(verts,faces,resolution=256)
-        lookup_uint = lookup_table.astype(np.uint16)
-        cv2.imwrite(level_output_path + "lookup_uint16.png", lookup_uint)
-        with open(level_output_path + "faces.json", "w") as f:
-            json.dump(faces_list, f, indent=4)
+        testbed.scene.camera.focalLength = 0
+        testbed.scene.camera.nearPlane = 0.001
+        testbed.scene.add_impostor()
+        base = 1
+        basic_info = {}
+        basic_info["radius"] = o_radius
+        basic_info["centorWS"] = centor.tolist()
         
-        camera_positions = centor + verts * o_radius 
-        # --- 统计 y 轴最大/最小值及索引 ---
-        y_values = camera_positions[:, 1]  # y 分量
-        y_min_idx = np.argmin(y_values)
-        y_max_idx = np.argmax(y_values)
-        y_min = y_values[y_min_idx]
-        y_max = y_values[y_max_idx]
-        r_list = []
-        f_list = []
-        u_list = []
-        p_list = []
-        print(f"[Level {subdiv_level}] y_min = {y_min:.4f} (index {y_min_idx}),  "
-            f"y_max = {y_max:.4f} (index {y_max_idx})")
-        
-        cnt = 0
-        radius_info=[]
-        for single_pos in camera_positions:
-            task_queue.put((i, output_path))
-            testbed.scene.camera.position = single_pos
-            if scale and scale_reference_path is not None:
-                rd = pyexr.read(scale_reference_path + "/level{}/depth_{:05d}.exr".format(subdiv_level,cnt))[...,:1]
-                ymin,ymax,xmin,xmax = nonzero_bbox(rd)
-                scale = (level_resolution // 2) / (max(level_resolution // 2 - ymin,ymax - level_resolution // 2,level_resolution // 2 - xmin,xmax - level_resolution // 2) + 1)
-                scale = max(scale,1)
-                scale_radius = o_radius *scale
-            else:
-                scale_radius = o_radius * (9-scale)/8
-            radius_info.append(scale_radius)
-            print(scale_radius)
-            testbed.scene.camera.target = normalize(centor - single_pos) * scale_radius * 2 + single_pos
-            up = unity_style_up(normalize(centor - single_pos))
-            r,u,f = compute_camera_basis(single_pos,normalize(centor - single_pos) * scale_radius * 2 + single_pos,up)
-            r_list.append(r)
-            u_list.append(u)
-            f_list.append(f)
-            p_list.append(single_pos)
-            testbed.scene.camera.up = up
-            testbed.run()
+        for subdiv_level in range(1,5):
+            level_resolution = finest_resolution
+            testbed.resize_frame_buffer(level_resolution,level_resolution)
+            basic_info["level"] = subdiv_level
+            basic_info["texDim"] = [level_resolution,level_resolution]
+            basic_info["invTexDim"] = [1/(level_resolution),1/(level_resolution)] 
+            basic_info["baseCameraResolution"] = 2048
 
-            for name in sellect_list:
-                index = object_data_dict[name]
-                tex2 = testbed.capture_output(
-                    level_output_path + '{}_{:05d}.exr'.format(name, cnt), index)
-            cnt += 1
-            print(subdiv_level,cnt)
+            level_output_path = output_folder + "level{}/".format(subdiv_level)
+            if not os.path.exists(level_output_path):
+                os.makedirs(level_output_path)
+
+            verts, faces = geodesic_impostor_mesh(subdiv_level)
+            faces_list = faces.tolist()  
+            #lookup_table = build_lookup_texture(verts,faces,resolution=128)
+            lookup_table = build_lookup_texture_speedup_chunk(verts,faces,resolution=2048,chunk_size=512)
+            #lookup_table2 = build_lookup_texture_speedup(verts,faces,resolution=256)
+            lookup_uint = lookup_table.astype(np.uint16)
+            cv2.imwrite(level_output_path + "lookup_uint16.png", lookup_uint)
+            with open(level_output_path + "faces.json", "w") as f:
+                json.dump(faces_list, f, indent=4)
             
-            #print("gg")
-        right_path = os.path.join(level_output_path, "right.json")
-        with open(right_path, "w") as f:
-            json.dump([r.tolist() for r in r_list], f, indent=4)
+            camera_positions = centor + verts * o_radius 
+            # --- 统计 y 轴最大/最小值及索引 ---
+            y_values = camera_positions[:, 1]  # y 分量
+            y_min_idx = np.argmin(y_values)
+            y_max_idx = np.argmax(y_values)
+            y_min = y_values[y_min_idx]
+            y_max = y_values[y_max_idx]
+            r_list = []
+            f_list = []
+            u_list = []
+            p_list = []
+            print(f"[Level {subdiv_level}] y_min = {y_min:.4f} (index {y_min_idx}),  "
+                f"y_max = {y_max:.4f} (index {y_max_idx})")
+            
+            cnt = 0
+            radius_info=[]
+            for single_pos in camera_positions:
+           
+                testbed.scene.camera.position = single_pos
+        
+                scale_radius = o_radius 
+                radius_info.append(scale_radius)
+   
+                testbed.scene.camera.target = normalize(centor - single_pos) * scale_radius * 2 + single_pos
+                basic_info["camera_position"] = list(np.array(single_pos))
+                basic_info["camera_target"] = list(f3_to_numpy(testbed.scene.camera.target))
+                up = unity_style_up(normalize(centor - single_pos))
+                r,u,f = compute_camera_basis(single_pos,normalize(centor - single_pos) * scale_radius * 2 + single_pos,up)
+                r_list.append(r)
+                u_list.append(u)
+                f_list.append(f)
+                p_list.append(single_pos)
+                
+                basic_info["camera_up"] = list(up)
+                task_queue.put((cnt, level_output_path + "/{}/".format(cnt),copy.deepcopy(basic_info)))
 
-        # === 保存 up ===
-        up_path = os.path.join(level_output_path, "up.json")
-        with open(up_path, "w") as f:
-            json.dump([u.tolist() for u in u_list], f, indent=4)
-
-        # === 保存 forward ===
-        forward_path = os.path.join(level_output_path, "forward.json")
-        with open(forward_path, "w") as f:
-            json.dump([f_.tolist() for f_ in f_list], f, indent=4)
-        radius_path = os.path.join(level_output_path, "radius.json")
-        with open(radius_path, "w") as f:
-            json.dump(radius_info, f, indent=4)
-        position_path = os.path.join(level_output_path, "position.json")
-        with open(position_path, "w") as f:
-            json.dump([p_.tolist() for p_ in p_list], f, indent=4)
-        with open(level_output_path + "basic_info.json", "w") as f:
-            json.dump(basic_info, f, indent=4)
-        print(f"✅ Saved right/up/forward/position JSONs to {level_output_path}")
-        # 任务分配（Round Robin）
-    
+                cnt += 1
+                print(cnt)
+            del lookup_uint
+            del lookup_table
+     
+            # 全部任务完成后，让 Worker 停止
             
 
-        # 全部任务完成后，让 Worker 停止
+            del basic_info["camera_position"],basic_info["camera_target"],basic_info["camera_up"]
+                #print("gg")
+            right_path = os.path.join(level_output_path, "right.json")
+            with open(right_path, "w") as f:
+                json.dump([r.tolist() for r in r_list], f, indent=4)
+
+            # === 保存 up ===
+            up_path = os.path.join(level_output_path, "up.json")
+            with open(up_path, "w") as f:
+                json.dump([u.tolist() for u in u_list], f, indent=4)
+
+            # === 保存 forward ===
+            forward_path = os.path.join(level_output_path, "forward.json")
+            with open(forward_path, "w") as f:
+                json.dump([f_.tolist() for f_ in f_list], f, indent=4)
+            radius_path = os.path.join(level_output_path, "radius.json")
+            with open(radius_path, "w") as f:
+                json.dump(radius_info, f, indent=4)
+            position_path = os.path.join(level_output_path, "position.json")
+            with open(position_path, "w") as f:
+                json.dump([p_.tolist() for p_ in p_list], f, indent=4)
+            with open(level_output_path + "basic_info.json", "w") as f:
+                json.dump(basic_info, f, indent=4)
+            print(f"✅ Saved right/up/forward/position JSONs to {level_output_path}")
+            # 任务分配（Round Robin）
         for _ in workers:
             task_queue.put("STOP")
 
         # 等待 Worker 完成
         for p in workers:
             p.join()
-
         print("=== All rendering tasks completed ===")
-        
+       
 
 
 

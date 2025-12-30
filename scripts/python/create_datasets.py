@@ -146,12 +146,12 @@ def _uniform_step01(a: float, b: float) -> float:
 
 def sample_roughness() -> float:
 
-    return _uniform_step01(0.09, 0.25)
+    return _uniform_step01(0.09, 0.12)
 
 import multiprocessing as mp
 def worker_process(worker_id, resolution, scene_path,
                    object_data_dict, select_list,
-                   task_queue: mp.Queue):
+                   task_queue: mp.Queue,result_queue: mp.Queue):
     """
     Worker 常驻进程：保持一个 Testbed 实例
     """
@@ -169,37 +169,48 @@ def worker_process(worker_id, resolution, scene_path,
         height=resolution,
         create_window=False,
         device=device,
-        spp=256
+        spp=1024
     )
     render_graph_MinimalPathTracer(testbed)
     testbed.load_scene(scene_path)
+    print(scene_path)
     print(f"[Worker {worker_id}] Testbed ready.")
-
-    # Worker 主循环：一直等待任务
     while True:
         task = task_queue.get()
 
         if task == "STOP":
             print(f"[Worker {worker_id}] Stopping.")
             break
-
-        i, output_path = task  # task payload
+        if len(task) == 2:
+            i, output_path = task  # task payload
+            r = sample_roughness()
+            testbed.scene.set_roughness("Wall", r )
+            cam = testbed.scene.camera
+            cam.position = np.random.uniform(-0.3, 0.3, size=[3]) + np.array([0.0, 0.25, 1.2])
+            cam.target = np.array([0.0, -0.5, 0.0]) + np.random.uniform(-0.3, 0.3, size=[3])
+            rand_state = {
+                "roughness": float(r),
+                "camera": {
+                    "position": list(f3_to_numpy(cam.position)),
+                    "target": list(f3_to_numpy(cam.target)),
+                }
+            }
+        else:
+            i, output_path, rand_state = task
+            testbed.scene.set_roughness("Wall", rand_state["roughness"] )
+            cam = testbed.scene.camera
+            cam.position = np.array(rand_state["camera"]["position"])
+            cam.target = np.array(rand_state["camera"]["target"])
         level_output_path = output_path + f"{i}/"
         os.makedirs(level_output_path, exist_ok=True)
 
         # === 渲染逻辑（你原来的 render 内部） ===
-        r = sample_roughness()
-        print(r)
-        testbed.scene.set_roughness("Wall", r )
-
-        cam = testbed.scene.camera
-        cam.position = np.random.uniform(-0.3, 0.3, size=[3]) + np.array([0.0, 0.25, 1.2])
-        cam.target = np.array([0.0, -0.5, 0.0]) + np.random.uniform(-0.3, 0.3, size=[3])
+        
         node_list = testbed.scene.get_scene_graph()
         node_dict = {}
         for node in node_list:
             node_dict[node["name"]] = node
-        print(node_dict["Light"]["transform"])
+
         camera_data ={}
         camera_data["position"] = list(f3_to_numpy( testbed.scene.camera.position))
         camera_data["forward"] = list(normalize(f3_to_numpy( testbed.scene.camera.target) - f3_to_numpy( testbed.scene.camera.position)))
@@ -218,28 +229,30 @@ def worker_process(worker_id, resolution, scene_path,
             json.dump(node_dict, f, indent=4, ensure_ascii=False)
         with open(level_output_path + "camera.json","w") as f:
             json.dump(camera_data, f, indent=4, ensure_ascii=False)
-def start_render_farm(resolution, scene_path, output_path,
+        result_queue.put((i, rand_state))
+def start_render_farm(resolution, scene_path,occlution_path, output_path,
                       object_data_dict, select_list,
                       num_workers=8, num_frames=500):
 
     task_queue = mp.Queue()
+    result_queue = mp.Queue()
 
     # 启动 Worker
     workers = []
     for wid in range(num_workers):
         p = mp.Process(
             target=worker_process,
-            args=(wid, resolution, scene_path,
+            args=(wid, resolution, scene_path,occlution_path,
                   object_data_dict, select_list,
-                  task_queue)
+                  task_queue,result_queue)
         )
         p.start()
         workers.append(p)
-
+    
     # 任务分配（Round Robin）
     for i in range(num_frames):
         task_queue.put((i, output_path))
-
+ 
     # 全部任务完成后，让 Worker 停止
     for _ in workers:
         task_queue.put("STOP")
@@ -249,6 +262,140 @@ def start_render_farm(resolution, scene_path, output_path,
         p.join()
 
     print("=== All rendering tasks completed ===")
+def start_render_farm2(
+    resolution,
+    scene_path,
+    occlution_path,
+    nolight_path,
+    output_path,
+    occ_output_path,
+    nolight_output_path,
+    object_data_dict,
+    select_list,
+    num_workers=8,
+    num_frames=500,
+):
+    task_queue = mp.Queue()
+    result_queue = mp.Queue()
+
+    # ===============================
+    # 1️⃣ 启动 Worker（只启动一次）
+    # ===============================
+    workers = []
+    for wid in range(num_workers):
+        p = mp.Process(
+            target=worker_process,
+            args=(
+                wid,
+                resolution,
+                scene_path,
+                object_data_dict,
+                select_list,
+                task_queue,
+                result_queue,
+            ),
+        )
+        p.start()
+        workers.append(p)
+
+    # ======================================================
+    # 2️⃣ 第一轮：随机采样 + 渲染 + 记录随机信息
+    # ======================================================
+    print("=== Pass 1: sampling & rendering ===")
+
+    for i in range(num_frames):
+        task_queue.put((i, output_path))
+
+    random_states = {}
+
+    for _ in range(num_frames):
+        i, rand_state = result_queue.get()
+        random_states[i] = rand_state
+
+    # 保存随机状态（强烈建议）
+    os.makedirs(output_path, exist_ok=True)
+    rand_state_path = os.path.join(output_path, "random_states.json")
+    with open(rand_state_path, "w") as f:
+        json.dump(random_states, f, indent=2)
+
+    print(f"[Pass 1] Saved random states to {rand_state_path}")
+
+    # ======================================================
+    # 3️⃣ 第二轮：复用随机信息，再完整跑一遍
+    # ======================================================
+    print("=== Pass 2: replay with fixed random states ===")
+    workers = []
+    task_queue = mp.Queue()
+    result_queue = mp.Queue()
+    for wid in range(num_workers):
+        p = mp.Process(
+            target=worker_process,
+            args=(
+                wid,
+                resolution,
+                nolight_path,
+                object_data_dict,
+                select_list,
+                task_queue,
+                result_queue,
+            ),
+        )
+        p.start()
+        workers.append(p)
+    for i in range(num_frames):
+        rand_state = random_states[i]
+        task_queue.put((i, nolight_output_path, rand_state))
+
+    # 等待第二轮完成（不再需要 result_queue）
+    for _ in range(num_frames):
+        result_queue.get()
+
+    # ===============================
+    # 4️⃣ 关闭 Worker
+    # ===============================
+    for _ in workers:
+        task_queue.put("STOP")
+
+    for p in workers:
+        p.join()
+
+    print("=== All rendering tasks completed (2-pass) ===")
+    workers = []
+    task_queue = mp.Queue()
+    result_queue = mp.Queue()
+    for wid in range(num_workers):
+        p = mp.Process(
+            target=worker_process,
+            args=(
+                wid,
+                resolution,
+                occlution_path,
+                object_data_dict,
+                select_list,
+                task_queue,
+                result_queue,
+            ),
+        )
+        p.start()
+        workers.append(p)
+    for i in range(num_frames):
+        rand_state = random_states[i]
+        task_queue.put((i, occ_output_path, rand_state))
+
+    # 等待第二轮完成（不再需要 result_queue）
+    for _ in range(num_frames):
+        result_queue.get()
+
+    # ===============================
+    # 4️⃣ 关闭 Worker
+    # ===============================
+    for _ in workers:
+        task_queue.put("STOP")
+
+    for p in workers:
+        p.join()
+
+    print("=== All rendering tasks completed (3-pass) ===")
 
 def render(resolution,testbed,scene_path,output_path,object_data_dict,sellect_list):
     testbed.load_scene(scene_path)
@@ -291,27 +438,39 @@ def render(resolution,testbed,scene_path,output_path,object_data_dict,sellect_li
          
             
 def main():
-
+    label ="test"
     scene_path = r'H:\Falcor\media\inv_rendering_scenes\bunny_ref_nobunny.pyscene'
+    occlution_path = r'H:\Falcor\media\inv_rendering_scenes\bunny_ref.pyscene'
+    nolight_path = r'H:\Falcor\media\inv_rendering_scenes\bunny_ref_nolight.pyscene'
     resolution = 512
     scale_path = scene_path.replace('.pyscene','') + "_{}/".format(resolution)
-    output_path = scene_path.replace('.pyscene','') + "9_25/".format(resolution)
+    output_path = scene_path.replace('.pyscene','') + "{}/".format(label)
+    occ_output_path = occlution_path.replace('.pyscene','') + "{}/".format(label)
+    nolight_output_path = nolight_path.replace('.pyscene','') + "{}/".format(label)
     if os.path.exists(output_path) == False:
         os.makedirs(output_path)
+    if os.path.exists(occ_output_path) == False:
+        os.makedirs(occ_output_path)
+    if os.path.exists(nolight_output_path) == False:
+        os.makedirs(nolight_output_path)
     # Create device and setup renderer.
     device = falcor.Device(type=falcor.DeviceType.Vulkan, gpu=0, enable_debug_layer=False)
     testbed = falcor.Testbed(width=resolution, height=resolution, create_window=False, device=device,spp=256000)
     
     outputPath = r'H:\\falcor\\image\\'
     render_graph_MinimalPathTracer(testbed)
-    start_render_farm(
+    start_render_farm2(
         resolution=512,
         scene_path=scene_path,
+        occlution_path=occlution_path,
+        nolight_path = nolight_path,
         output_path=output_path,
+        occ_output_path=occ_output_path,
+        nolight_output_path = nolight_output_path,
         object_data_dict=object_key_dict,
         select_list=sellect_list,
-        num_workers=16,
-        num_frames=4000
+        num_workers=8,
+        num_frames=500
     )
 
 if __name__ == "__main__":

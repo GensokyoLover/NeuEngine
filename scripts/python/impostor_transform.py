@@ -142,30 +142,45 @@ i = 0
 
 # dataset_process(r"H:/Falcor/media/inv_rendering_scenes/bunny_ref_nobunny9_25/",impostor,test=True)
 # exit()
+#ckpt_path = r"H:\Falcor\ckpt\cylinder_encoding_lr_nearestgg3e-4_continue/step_00000090.pt" 
+ckpt_path =False
+start_epoch = 0
 roughness = torch.round(torch.arange(0.0, 1.0 + 1e-9, 0.01) * 100) / 100
 theta95_deg = ggx_theta99_from_roughness(roughness, alpha_is_roughness_sq=True, degrees=True).cuda()
 # dataset_process(r"H:/Falcor/media/inv_rendering_scenes/bunny_ref_nobunny_roughnesscorrect/",impostor)
 # exit()
 impostor = load_impostor2("Light",1)
-label = "bunny_ref_nobunny9_25_cylinder_encoding_lr3e-4"
+label = "roughness_9"
 log_dir = "./runs/{}".format(label)
 ensure_dir(log_dir)
 writer = SummaryWriter(log_dir=log_dir)
 
 debug_dir = "./output/{}".format(label)
 ensure_dir(debug_dir)
-
+ckpt_save_path = "./ckpt/{}".format(label)
+ensure_dir(ckpt_save_path)
 global_step = 0
 training_data = ImpostorTrainingDataset(r"H:/Falcor/media/inv_rendering_scenes/bunny_ref_nobunny9_25/")
 test_data = ImpostorTrainingTestDataset(r"H:/Falcor/media/inv_rendering_scenes/bunny_ref_nobunny9_25/")
 training_data_loader = DataLoader(training_data, batch_size=1, shuffle=True)
-test_data_loader = DataLoader(test_data, batch_size=1, shuffle=True)
+test_data_loader = DataLoader(test_data, batch_size=1, shuffle=False)
 emissive_encoder = MultiScaleImageEncoder(3,128).cuda()
 geo_encoder = MultiScaleImageEncoder(6,128).cuda()
 image_decoder = ImageDecoder(10 + 128,256).cuda()
 image_decoder2 = ImageDecoder(10,256).cuda()
 mlp_weight = MLP15to3Softmax().cuda()
-# view_combine = PixelMultiheadAttention(128).cuda()
+
+
+if ckpt_path != False:
+    start_epoch, global_step = load_checkpoint(
+        ckpt_path,
+        emissive_encoder,
+        geo_encoder,
+        image_decoder,
+        image_decoder2,
+        mlp_weight,
+        optimizer=None
+    )
 params = []
 params += list(emissive_encoder.parameters())
 params += list(geo_encoder.parameters())
@@ -179,6 +194,8 @@ optimizer = torch.optim.AdamW(
     betas=(0.9, 0.999),
     weight_decay=1e-4,
 )
+# view_combine = PixelMultiheadAttention(128).cuda()
+
 criterion = torch.nn.L1Loss()   
 num_epochs = 1000
 
@@ -214,21 +231,18 @@ for epoch in range(num_epochs):
         for level in range(4):
             depthDownList.append(min_downsample_pool(depth, 4**(level+1)))
             positionDownList.append(mean_downsample_pool(origin, 4**(level+1)))
-        for i in range(5):
-            pyexr.write("./depthdown{}.exr".format(i), depthDownList[i][0].cpu().numpy())
+    
             
         gbuffer_input = sellect_gbuffer_data(train_data, ["position", "normal", "roughness", "view"])
-        geo_input = torch.cat([centor,normal],dim=-1)
         emission_feature = emissive_encoder(emission)
         #geo_feature = geo_encoder(geo_input.permute(0, 3, 1, 2)).permute(0, 2, 3, 1)
         reflect_uvi = train_data[sample_key][..., :2].permute(0, 3, 1, 2, 4).reshape(-1, H, W, 2)
         
 
-        emission_vis = F.grid_sample(emission.permute(0, 3, 1, 2), reflect_uvi, mode="nearest", align_corners=False)
-        referCylinderAxis = F.grid_sample(-direction.permute(0, 3, 1, 2), reflect_uvi, mode="nearest", align_corners=False)
-        reflect_centor = F.grid_sample(centor.permute(0, 3, 1, 2), reflect_uvi, mode="nearest", align_corners=False)
-        firstHit = F.grid_sample(depthDownList[1].permute(0, 3, 1, 2), reflect_uvi, mode="nearest", align_corners=False)
-        referOrigin = F.grid_sample(positionDownList[0].permute(0, 3, 1, 2), reflect_uvi, mode="nearest", align_corners=False)
+        emission_vis = F.grid_sample(emission.permute(0, 3, 1, 2), reflect_uvi, mode="nearest", align_corners=False,padding_mode="border")
+        referCylinderAxis = F.grid_sample(-direction.permute(0, 3, 1, 2), reflect_uvi, mode="nearest", align_corners=False,padding_mode="border")
+        firstHit = F.grid_sample(depthDownList[1].permute(0, 3, 1, 2), reflect_uvi, mode="nearest", align_corners=False,padding_mode="border")
+        referOrigin = F.grid_sample(positionDownList[0].permute(0, 3, 1, 2), reflect_uvi, mode="nearest", align_corners=False,padding_mode="border")
         referCylinderRadius = (torch.zeros_like(firstHit) + 16/512).permute(0,2,3,1)
         referCylinderLenth = referCylinderRadius * 2
         referCylinderCentor = (firstHit + referCylinderRadius.permute(0,3,1,2)) * referCylinderAxis + referOrigin
@@ -252,14 +266,18 @@ for epoch in range(num_epochs):
         # reflect_lenth = reflect_lenth - mini                               
         # reflect_input = torch.zeros_like(emission)
         # reflect_input = reflect_input.permute(1, 2, 0, 3).reshape(1, 256, 256, 15)
+        # for i in range(3):
+        #     pyexr.write("./reflect_emission{}.exr",emission_vis[i].permute(1,2,0).reshape(H,W,3).cpu().numpy())
+        # pyexr.write("./gt.exr",train_data["AccumulatePassoutput"].reshape(H,W,3).cpu().numpy())
         reflect_input =value.permute(1,2,0,3).reshape(1,256,256,15)
         weight = mlp_weight(reflect_input)  # 期望 (1,256,256,3) or 等价
 
         feature = F.grid_sample(
             emission_feature["I0"],
             reflect_uvi,
-            mode="bilinear",
-            align_corners=True
+            mode="nearest",
+            align_corners=True,
+            padding_mode="border"
         ).permute(0, 2, 3, 1)  # (3,H,W,C) or (V,H,W,C)
 
         # weight: (1,256,256,3) -> (3,256,256,1) to broadcast with feature
@@ -295,9 +313,20 @@ for epoch in range(num_epochs):
         if (global_step % 10) == 0 and i < 20:
             save_path = os.path.join(debug_dir, f"step_{global_step:08d}_scene_{i}.exr")
             save_result_exr(output.detach(), gt.detach(), save_path)
-        break
+        #break
     writer.add_scalar("train/loss", float(total_loss/len(training_data_loader)), global_step)
     global_step += 1
+    if global_step % 10 == 0:
+        save_checkpoint(
+            ckpt_save_path + f"/step_{global_step:08d}.pt",
+            epoch,
+            global_step,
+            emissive_encoder,
+            geo_encoder,
+            image_decoder,
+            image_decoder2,
+            mlp_weight
+        )
     #continue
     tpbar = tqdm(test_data_loader, total=len(test_data_loader), desc=f"Epoch {epoch+1}", dynamic_ncols=True)
     ## test no grad
@@ -306,37 +335,77 @@ for epoch in range(num_epochs):
     image_decoder.eval()
     # 2. 禁用梯度（最重要）
     with torch.no_grad():
+        debug_test_dir = debug_dir + "/test/"
+        ensure_dir(debug_test_dir)
         for i, (test_data, scene_id) in enumerate(tpbar):
+            if i != 4:
+                continue
             test_data = tocuda(test_data)
-            emission_feature = emissive_encoder(impostor.texDict["emission"])
-            torch.cuda.empty_cache()
-            print(torch.cuda.memory_allocated() / 1024**3, "GB allocated")
-            print(torch.cuda.memory_reserved()  / 1024**3, "GB reserved")
-            final_feature = []
-            for i in range(3):
-                feature = sample_by_uvi_bilinear_align_false(emission_feature["I0"], test_data[sample_key].reshape(1,512,512,3,3)[:,:,:,i,:])
-                final_feature.append(feature)
-            final_feature = torch.cat(final_feature,dim=0)
-            # gbuffer_input = sellect_gbuffer_data(test_data, ["position", "normal", "roughness", "view"])
+            emission_feature_list = []
+            for v in range(42):
+                emission_feature = emissive_encoder(impostor.texDict["emission"][v:v+1])
+                torch.cuda.empty_cache()
+                print(torch.cuda.memory_allocated() / 1024**3, "GB allocated")
+                print(torch.cuda.memory_reserved()  / 1024**3, "GB reserved")
+                emission_feature_list.append(emission_feature["I0"])
+            emission_feature = torch.cat(emission_feature_list,dim=0)
+     
+       
+            final_feature = sample_by_uvi_bilinear_align_false(emission_feature.permute(0,2,3,1), test_data[sample_key].reshape(1,512,512,3,3),mode="nearest")
 
-            # #emission_feature = image_encoder(emission.permute(0, 3, 1, 2)).permute(0, 2, 3, 1)
+            depth = impostor.texDict["depth"]
+            origin = impostor.texDict["raypos"]
+            depthDownList = []
+            positionDownList = []
+            depthDownList.append(depth)
+            positionDownList.append(origin)
+            for level in range(4):
+                depthDownList.append(min_downsample_pool(depth, 4**(level+1)))
+                positionDownList.append(mean_downsample_pool(origin, 4**(level+1)))
+            gbuffer_input = sellect_gbuffer_data(test_data, ["position", "normal", "roughness", "view"])
+            #geo_feature = geo_encoder(geo_input.permute(0, 3, 1, 2)).permute(0, 2, 3, 1)
+            
 
-            # reflect_uvi = test_data[sample_key][..., :2].permute(0, 3, 1, 2, 4).reshape(-1, H, W, 2)
+            # emission_vis = F.grid_sample(emission.permute(0, 3, 1, 2), reflect_uvi, mode="nearest", align_corners=False)
+            emission_vis = sample_by_uvi_bilinear_align_false(impostor.texDict["emission"],test_data[sample_key].reshape(1,512,512,3,3),mode="nearest")
+            referCylinderAxis = sample_by_uvi_bilinear_align_false(-impostor.texDict["view"], test_data[sample_key].reshape(1,512,512,3,3),mode="nearest")
+            firstHit = sample_by_uvi_bilinear_align_false(depthDownList[1], test_data[sample_key].reshape(1,512,512,3,3),mode="nearest")
+            referOrigin = sample_by_uvi_bilinear_align_false(origin, test_data[sample_key].reshape(1,512,512,3,3),mode="nearest")
+            referCylinderRadius = (torch.zeros_like(firstHit) + 16/512)
+            referCylinderLenth = referCylinderRadius * 2
+            referCylinderCentor = (firstHit + referCylinderRadius) * referCylinderAxis + referOrigin
+            referCylinderLenth = referCylinderLenth
+            referCylinderCentor = referCylinderCentor
+            referCylinderAxis = referCylinderAxis
+            singleCentor = referCylinderCentor[0,:,:,:].permute(1,2,0)
+            singleCentor1 = referCylinderCentor[1,:,:,:].permute(1,2,0)
+            singleCentor2 = referCylinderCentor[2,:,:,:].permute(1,2,0)
+            targetCylinderAxis = test_data["reflectDirL"].reshape(1,512,512,-1)
+            targetConeAngle = theta95_deg[(torch.where(test_data["roughness"] * 100<2,2,test_data["roughness"] * 100)).int()]
+            targetCylinderRadius = cone_radius_deg(test_data["mind"],targetConeAngle)
+            targetCylinderLenth = targetCylinderRadius * 2
+            targetCylinderCentor = test_data["referencePosL2"].reshape(1,512,512,-1)
+            value = relative_cylinder_encoding_with_axis(referCylinderCentor,referCylinderAxis,referCylinderRadius[...,0],referCylinderLenth[...,0],targetCylinderCentor,targetCylinderAxis,targetCylinderRadius[...,0],targetCylinderLenth[...,0])
+            reflect_input =value.permute(1,2,0,3).reshape(1,512,512,15)
+            weight = mlp_weight(reflect_input)  # 期望 (1,256,256,3) or 等价
 
-            # emission_vis = F.grid_sample(emission.permute(0, 3, 1, 2), reflect_uvi, mode="bilinear", align_corners=False)
-            # out_dir = F.grid_sample(-direction.permute(0, 3, 1, 2), reflect_uvi, mode="bilinear", align_corners=False)
-            # reflect_centor = F.grid_sample(centor.permute(0, 3, 1, 2), reflect_uvi, mode="bilinear", align_corners=False)
+         
+            combine_feature = (final_feature * weight.permute(3, 1, 2, 0)).sum(dim=0, keepdim=True)
 
-            # gbuffer_to_centor = reflect_centor.permute(0, 2, 3, 1) - test_data["refelctPosL"]
-            # angle = angle_between_tensors_atan2(gbuffer_to_centor, test_data["reflectDirL"], dim=-1, degrees=True) / 0.1
-
-            # reflect_lenth = gbuffer_to_centor.norm(dim=-1, keepdim=True)
-            # mini, _ = reflect_lenth.min(dim=0, keepdim=True)
-            # reflect_lenth = reflect_lenth - mini
-
-            # reflect_input = torch.cat([out_dir.permute(0, 2, 3, 1), angle.unsqueeze(dim=-1), reflect_lenth], dim=-1)
-            # reflect_input = reflect_input.permute(1, 2, 0, 3).reshape(1, 256, 256, 15)
-    
+            decoder_input = torch.cat([combine_feature, gbuffer_input], dim=-1)
+            #decoder_input = torch.cat([combine_feature, gbuffer_input], dim=-1)
+            #output = image_decoder2(gbuffer_input)  # 假设输出 (1,H,W,3)
+            output = image_decoder(decoder_input)  # 假设输出 (1,H,W,3)
+            output_path = os.path.join(debug_test_dir, f"epoch_{global_step+1:04d}_scene_{i}_output.exr")
+            gt_path = os.path.join(debug_test_dir, f"epoch_{global_step+1:04d}_scene_{i}_gt.exr")
+            roughness_path = os.path.join(debug_test_dir, f"epoch_{global_step+1:04d}_scene_{i}_roughness.exr")
+            pyexr.write(gt_path,test_data["AccumulatePassoutput"].reshape(512,512,3).cpu().numpy())
+            pyexr.write(output_path,output.reshape(512,512,3).cpu().numpy())
+            pyexr.write(roughness_path,test_data["roughness"].reshape(512,512,1).cpu().numpy())
+            break
+    emissive_encoder.train()
+    mlp_weight.train()
+    image_decoder.train()
 writer.close()
 # for epoch in range(num_epochs):
 #     print(f"===== Epoch {epoch+1}/{num_epochs} =====")
