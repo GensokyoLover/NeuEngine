@@ -81,7 +81,7 @@ def worker_process(worker_id, resolution, scene_path,
         height=resolution,
         create_window=False,
         device=device,
-        spp=256
+        spp=4
     )
     render_graph_MinimalPathTracer(testbed)
     testbed.load_scene(scene_path)
@@ -165,7 +165,8 @@ def save_compressed_pickle(data, file_path):
 
 object_data_list = ["color","position","albedo","specular","normal","roughness","depth","AccumulatePassoutput","emission","view","raypos"]
 object_key_dict = {name: i for i, name in enumerate(object_data_list)}
-sellect_list = ["color","position","albedo","specular","normal","roughness","depth","AccumulatePassoutput","emission","view","raypos"]
+#sellect_list = ["color","position","albedo","specular","normal","roughness","depth","AccumulatePassoutput","emission","view","raypos"]
+sellect_list = ["depth"]
 #object_data_list = ["color","position","albedo","specular","normal","roughness","depth","AccumulatePassoutput"]
 def pack_object_data(path,camera_resolution,direction_resolution):
     data = {}
@@ -212,6 +213,11 @@ def convert_exr_to_rgba(input_dir, output_dir):
         except Exception as e:
             print(f"[Error] {fname}: {e}")
 
+def multiply_until_gt_1024(x):
+    while x <= 512:
+        x *= 2
+    return x
+
 import copy
 def main():
     # get_bounding_box(r'E:\TOG\Falcor\media\test_scenes\meshes\bunny_centered.obj')
@@ -223,18 +229,21 @@ def main():
     # pyexr.write("./lookup.exr",lookup_loaded)
 
     finest_resolution = 512
-    folder_path = r"H:\Falcor\media\inv_rendering_scenes\object_level_config_test/"
-    file_list = os.listdir(r"H:\Falcor\media\inv_rendering_scenes\object_level_config/")
+    scene_name = "dragon"
+    folder_path = r"H:\Falcor\scenes/" 
+    output_folder =  r"H:\Falcor\datasets/" + scene_name + "2/"
+    resolution_list = [1024,512,182,64,24,8]
+    file_list = os.listdir(folder_path)
     for file in file_list: 
         if file.split(".")[-1] != "pyscene":
             continue
-        if file=="Light.pyscene":
+        if file!="dragon.pyscene":
             continue
         # if (file.split(".")[0] + "level3") in file_list:
         #     continue
         scene_path = folder_path + file
         
-        output_folder = scene_path.replace('.pyscene','')
+
         os.makedirs(output_folder, exist_ok=True)
         # Create device and setup renderer.
         device = falcor.Device(type=falcor.DeviceType.Vulkan, gpu=0, enable_debug_layer=False)
@@ -248,15 +257,7 @@ def main():
         scene = testbed.scene
         # 启动 Worker
         workers = []
-        for wid in range(16):
-            p = mp.Process(
-                target=worker_process,
-                args=(wid, 512, scene_path,
-                    object_key_dict, sellect_list,
-                    task_queue)
-            )
-            p.start()
-            workers.append(p)
+        
         a = f3_to_numpy(scene.bounds.min_point)
         b = f3_to_numpy(scene.bounds.max_point)
         centor,object_radius,o_radius,p_radius = sampling_radii_from_aabb(a,b)
@@ -269,8 +270,22 @@ def main():
         basic_info["radius"] = o_radius
         basic_info["centorWS"] = centor.tolist()
         
-        for subdiv_level in range(1,5):
-            level_resolution = finest_resolution
+        for subdiv_level in range(1,2):
+            if subdiv_level>1:
+                level_resolution =  multiply_until_gt_1024(resolution_list[subdiv_level])
+            else:
+                level_resolution = finest_resolution
+            # print(level)
+            # continue
+            for wid in range(16):
+                p = mp.Process(
+                    target=worker_process,
+                    args=(wid, level_resolution, scene_path,
+                        object_key_dict, sellect_list,
+                        task_queue)
+                )
+                p.start()
+                workers.append(p)
             testbed.resize_frame_buffer(level_resolution,level_resolution)
             basic_info["level"] = subdiv_level
             basic_info["texDim"] = [level_resolution,level_resolution]
@@ -313,10 +328,10 @@ def main():
         
                 scale_radius = o_radius 
                 radius_info.append(scale_radius)
-   
+                single_info = {}
                 testbed.scene.camera.target = normalize(centor - single_pos) * scale_radius * 2 + single_pos
-                basic_info["camera_position"] = list(np.array(single_pos))
-                basic_info["camera_target"] = list(f3_to_numpy(testbed.scene.camera.target))
+                single_info["camera_position"] = list(np.array(single_pos))
+                single_info["camera_target"] = list(f3_to_numpy(testbed.scene.camera.target))
                 up = unity_style_up(normalize(centor - single_pos))
                 r,u,f = compute_camera_basis(single_pos,normalize(centor - single_pos) * scale_radius * 2 + single_pos,up)
                 r_list.append(r)
@@ -324,8 +339,8 @@ def main():
                 f_list.append(f)
                 p_list.append(single_pos)
                 
-                basic_info["camera_up"] = list(up)
-                task_queue.put((cnt, level_output_path + "/{}/".format(cnt),copy.deepcopy(basic_info)))
+                single_info["camera_up"] = list(up)
+                task_queue.put((cnt, level_output_path + "/{}/".format(cnt),copy.deepcopy(single_info)))
 
                 cnt += 1
                 print(cnt)
@@ -335,7 +350,6 @@ def main():
             # 全部任务完成后，让 Worker 停止
             
 
-            del basic_info["camera_position"],basic_info["camera_target"],basic_info["camera_up"]
                 #print("gg")
             right_path = os.path.join(level_output_path, "right.json")
             with open(right_path, "w") as f:
@@ -360,13 +374,13 @@ def main():
                 json.dump(basic_info, f, indent=4)
             print(f"✅ Saved right/up/forward/position JSONs to {level_output_path}")
             # 任务分配（Round Robin）
-        for _ in workers:
-            task_queue.put("STOP")
+            for _ in workers:
+                task_queue.put("STOP")
 
-        # 等待 Worker 完成
-        for p in workers:
-            p.join()
-        print("=== All rendering tasks completed ===")
+            # 等待 Worker 完成
+            for p in workers:
+                p.join()
+            print("=== All rendering tasks completed ===")
        
 
 

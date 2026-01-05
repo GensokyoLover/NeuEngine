@@ -105,8 +105,8 @@ def build_lookup_texture_speedup_chunk(verts, faces, resolution=2048, device="cu
     GPU 加速构建 lookup texture，支持大分辨率分批计算，避免显存溢出。
     verts: (V, 3)
     faces: (F, 3)
-    resolution: 贴图分辨率 (例如 2048)
     chunk_size: 每次计算的 tile 尺寸（建议 256~512）
+    resolution: 贴图分辨率 (例如 2048)
     """
     # === 上传数据到 GPU ===
     verts = torch.as_tensor(verts, dtype=torch.float32, device=device)

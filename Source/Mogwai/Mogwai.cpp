@@ -605,6 +605,7 @@ namespace Mogwai
 
     void Renderer::applyEditorChanges()
     {
+        
         if (!mEditorProcess) return;
         // If the editor was closed, reset the handles
         if ((mEditorProcess != kInvalidProcessId) && isProcessRunning(mEditorProcess) == false) resetEditor();
@@ -659,6 +660,7 @@ namespace Mogwai
 
     void Renderer::beginFrame(RenderContext* pRenderContext, const ref<Fbo>& pTargetFbo)
     {
+        FALCOR_PROFILE(pRenderContext, "beiginframe2");
         for (auto& pe : mpExtensions)  pe->beginFrame(pRenderContext, pTargetFbo);
     }
 
@@ -675,15 +677,15 @@ namespace Mogwai
             mScriptPath.clear();
             loadScript(path);
         }
-
+        
         applyEditorChanges();
-
+        
         if (mActiveGraph < mGraphs.size())
         {
             auto& pGraph = mGraphs[mActiveGraph].pGraph;
             pGraph->compile(pRenderContext);
         }
-
+        
         beginFrame(pRenderContext, pTargetFbo);
 
         // Clear frame buffer.
@@ -698,8 +700,11 @@ namespace Mogwai
                 mSceneUpdateCallback(mpScene, getGlobalClock().getTime());
 
             // Update scene and camera.
-            if (mpScene)
+            
+            if (mpScene && cnt < 100)
             {
+                //cnt = cnt + 1;
+                printf("Frame %d \n", cnt);
                 auto sceneUpdates = mpScene->update(pRenderContext, getGlobalClock().getTime());
 
                 // Accumulate scene update flags for each graph.

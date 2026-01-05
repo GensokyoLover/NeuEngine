@@ -24,7 +24,7 @@
 #include "Utils/UI/Gui.h"
 #include "Utils/Scripting/ScriptBindings.h"
 #include "Utils/Scripting/ScriptWriter.h"
-
+#include <math.h>
 #include <filesystem>
 #include <fstream>
 #include <nlohmann/json.hpp>
@@ -33,7 +33,7 @@ namespace Falcor
     using namespace std;
     namespace fs = std::filesystem;
     using json = nlohmann::json;
-    vector<string> vec = {"depth","albedo","normal"};
+    vector<string> vec = {"2depth","2albedo","2normal"};
     Impostor::Impostor(const std::string& name)
         : mName(name)
     {
@@ -58,16 +58,17 @@ namespace Falcor
         ifs >> j;
         radius = j["radius"].get<float>();
         centorWS = float3(j["centorWS"][0].get<float>(), j["centorWS"][1].get<float>(), j["centorWS"][2].get<float>());
-        level = j["level"].get<int>();
-        texDim = uint2(j["texDim"][0].get<uint32_t>(), j["texDim"][1].get<uint32_t>());
+        level = j["level"].get<int>() - 1;
+        texDim = uint2(j["texDim"][0].get<uint32_t>()/ std::pow(2, level), j["texDim"][1].get<uint32_t>()/ std::pow(2, level)) ;
         invTexDim = 1.0f / float2(texDim);
         baseCameraResolution = j["baseCameraResolution"].get<int>();
-
-
+        if (level == 0) {
+            mpNormalAtlas = Texture::createFromFolder(pDevice, folderPath , false, false, ResourceBindFlags::ShaderResource, Bitmap::ImportFlags::None,"2normal");
+            mpAlbedoAtlas = Texture::createFromFile(pDevice, folderPath + "\\albedo_atlas.exr", false, false, ResourceBindFlags::ShaderResource, Bitmap::ImportFlags::None);
+        }
         
-        mpDepthArray = Texture::createFromFolder(pDevice, folderPath, false, false, ResourceBindFlags::ShaderResource, Bitmap::ImportFlags::None, vec[0]);
-        mpAlbedoArray= Texture::createFromFolder(pDevice, folderPath, false, false, ResourceBindFlags::ShaderResource, Bitmap::ImportFlags::None, vec[1]);
-        mpNormalArray= Texture::createFromFolder(pDevice, folderPath, false, false, ResourceBindFlags::ShaderResource, Bitmap::ImportFlags::None, vec[2]);
+        mpDepthArray = Texture::createFromFolder(pDevice, folderPath, false, false, ResourceBindFlags::ShaderResource, Bitmap::ImportFlags::None,"2depth");
+        mpDepthAtlas = Texture::createFromFile(pDevice, folderPath + "\\depth_atlas.exr", false, false, ResourceBindFlags::ShaderResource, Bitmap::ImportFlags::None);
         Bitmap::UniqueConstPtr pBitmap = Bitmap::createFromFile(folderPath + "\\lookup_uint16.png",true, Bitmap::ImportFlags::None);
         mpFaceIndex = pDevice->createTexture2D(
             pBitmap->getWidth(),
@@ -80,18 +81,16 @@ namespace Falcor
         );;
      
        
-        const uint32_t w = mpDepthArray->getWidth();
-        const uint32_t h = mpDepthArray->getHeight();
-        const uint32_t n = (uint32_t)mpDepthArray->getArraySize();
-        const auto fmt = mpDepthArray->getFormat();
-        mTexWidth = w;
-        mTexHeight = h;
+        createCameraDirectionBuffersFromFolder(pDevice, folderPath);
+        createSampler(pDevice);
+
+        const uint32_t n = mpForwardDirs->getElementCount();
+  
+
         mViewCount = n;
         mDirty = true;
 
-        logInfo("Loaded impostor from folder '{}', {} views ({}x{})", folderPath, n, w, h);
-        createCameraDirectionBuffersFromFolder(pDevice, folderPath);
-        createSampler(pDevice);
+        
         return true;
     }
 
@@ -99,7 +98,10 @@ namespace Falcor
         Sampler::Desc samplerDesc;
         samplerDesc.setFilterMode(TextureFilteringMode::Point, TextureFilteringMode::Point, TextureFilteringMode::Point);
         samplerDesc.setAddressingMode(TextureAddressingMode::Wrap, TextureAddressingMode::Clamp, TextureAddressingMode::Clamp);
-        mpSampler = pDevice->createSampler(samplerDesc);
+        mpPointSampler = pDevice->createSampler(samplerDesc);
+        samplerDesc.setFilterMode(TextureFilteringMode::Linear, TextureFilteringMode::Linear, TextureFilteringMode::Linear);
+        samplerDesc.setAddressingMode(TextureAddressingMode::Wrap, TextureAddressingMode::Clamp, TextureAddressingMode::Clamp);
+        mpLinearSampler = pDevice->createSampler(samplerDesc);
     }
 
     template<typename Vec3T>
@@ -242,29 +244,47 @@ namespace Falcor
 
     void Impostor::bindShaderData(const ShaderVar& var) const
     {
-        if (!mpDepthArray || !mpSampler)
+        if (!mpLinearSampler || !mpPointSampler)
         {
             logWarning("Impostor::bindShaderData() called without valid texture or sampler.");
             return;
         }
 
-        var["texDepth"] = mpDepthArray;
-        var["texAlbedo"] = mpAlbedoArray;
-        var["texNormal"] = mpNormalArray;
-        var["texFaceIndex"] = mpFaceIndex;
-        var["samplerLinear"] = mpSampler;
-        if (mpForwardDirs) var["cForward"] = mpForwardDirs;
-        if (mpUpDirs) var["cUp"] = mpUpDirs;
-        if (mpRightDirs) var["cRight"] = mpRightDirs;
-        if (mpPosition) var["cPosition"] = mpPosition;
-        if (mpFaces) var["cFace"] = mpFaces;
-        if (mpRadius) var["cRadius"] = mpRadius;
-        var["level"] = level;
-        var["centerWS"] = centorWS;
-        var["radius"] = radius;
-        var["invTexDim"] = invTexDim;
-        var["baseCameraResolution"] = baseCameraResolution;
-        var["texDim"] = texDim;
+        //var["texDepth"] = mpDepthArray;                                                                                   
+        //var["texAlbedo"] = mpAlbedoArray;
+        //var["texNormal"] = mpNormalArray;
+
+        if (level == 0) {
+            var["texNormalArray"][0] = mpNormalAtlas[0];
+            var["texAlbedoAtlas"] = mpAlbedoAtlas;
+        }
+        var["texDepthAtlas"][level] = mpDepthAtlas;
+        if (level < 3) 
+            var["texDepthArray"][level] = mpDepthArray[0];
+        else if (level == 3) {
+            var["texDepthArray"][level] = mpDepthArray[0];
+            var["texDepthArray"][level + 1] = mpDepthArray[1];
+        }
+        else if (level == 4) {
+            var["texDepthArray"][level + 1] = mpDepthArray[0];
+            var["texDepthArray"][level + 2] = mpDepthArray[1];
+        }
+        var["texFaceIndex"][level] = mpFaceIndex;
+        var["samplerLinear"][level] = mpLinearSampler;
+        var["samplerPoint"][level] = mpPointSampler;
+
+        if (mpForwardDirs) var["cForward"][level] = mpForwardDirs;
+        if (mpUpDirs) var["cUp"][level] = mpUpDirs;
+        if (mpRightDirs) var["cRight"][level] = mpRightDirs;
+        if (mpPosition) var["cPosition"][level] = mpPosition;
+        if (mpFaces) var["cFace"][level] = mpFaces;
+        if (mpRadius) var["cRadius"][level] = mpRadius;
+        var["level"][level] = level;
+        var["centerWS"][level] = centorWS;
+        var["radius"][level] = radius;
+        var["invTexDim"][level] = invTexDim;
+        var["texDim"][level] = texDim;
+        var["baseCameraResolution"][level] = baseCameraResolution;
     }
 
     void Impostor::reload(RenderContext* pRenderContext)
@@ -290,7 +310,7 @@ namespace Falcor
             widget.dropdown("Format", formats, 0);
         }*/
 
-        if (mpSampler)
+        if (mpLinearSampler)
         {
             widget.text("Sampler: Linear Clamp");
         }

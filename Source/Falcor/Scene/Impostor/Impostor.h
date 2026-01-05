@@ -52,8 +52,8 @@ namespace Falcor
         const ref<Buffer>& getUpDirs() const { return mpUpDirs; }
 
         /** Set and get sampler state. */
-        void setSampler(const ref<Sampler>& sampler) { mpSampler = sampler; }
-        const ref<Sampler>& getSampler() const { return mpSampler; }
+        void setSampler(const ref<Sampler>& sampler) { mpLinearSampler = sampler; }
+        const ref<Sampler>& getSampler() const { return mpLinearSampler; }
 
         /** Set impostor metadata. */
         void setViewCount(uint32_t count) { mViewCount = count; mDirty = true; }
@@ -82,9 +82,10 @@ namespace Falcor
         mutable bool mDirty = false;
         std::string mName;
 
-        ref<Texture> mpDepthArray;
-        ref<Texture> mpAlbedoArray;
-        ref<Texture> mpNormalArray;
+        ref<Texture> mpDepthAtlas;
+        std::vector<ref<Texture>> mpDepthArray;
+        std::vector<ref<Texture>> mpNormalAtlas;
+        ref<Texture> mpAlbedoAtlas;
         ref<Texture> mpFaceIndex;
         ref<Buffer> mpForwardDirs;
         ref<Buffer> mpUpDirs;
@@ -92,7 +93,8 @@ namespace Falcor
         ref<Buffer> mpPosition;
         ref<Buffer> mpFaces;
         ref<Buffer> mpRadius;
-        ref<Sampler> mpSampler;
+        ref<Sampler> mpLinearSampler;
+        ref<Sampler> mpPointSampler;
 
         uint32_t mViewCount = 0;
         uint32_t mTexWidth = 0;

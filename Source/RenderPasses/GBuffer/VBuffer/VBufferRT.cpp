@@ -84,6 +84,7 @@ VBufferRT::VBufferRT(ref<Device> pDevice, const Properties& props) : GBufferBase
 
     // Create sample generator
     mpSampleGenerator = SampleGenerator::create(mpDevice, SAMPLE_GENERATOR_DEFAULT);
+    mpRoughness = 0;
 }
 
 RenderPassReflection VBufferRT::reflect(const CompileData& compileData)
@@ -129,8 +130,8 @@ void VBufferRT::execute(RenderContext* pRenderContext, const RenderData& renderD
             renderData.getDictionary()[Falcor::kRenderPassPRNGDimension] = mComputeDOF ? 2u : 0u;
         }
 
-        mUseTraceRayInline ? executeCompute(pRenderContext, renderData) : executeRaytrace(pRenderContext, renderData);
-        //executeCompute(pRenderContext, renderData);
+        //mUseTraceRayInline ? executeCompute(pRenderContext, renderData) : executeRaytrace(pRenderContext, renderData);
+        executeCompute(pRenderContext, renderData);
         mUpdateFlags = IScene::UpdateFlags::None;
         mFrameCount++;
     }
@@ -155,6 +156,7 @@ void VBufferRT::renderUI(Gui::Widgets& widget)
     {
         mOptionsChanged = true;
     }
+    widget.var("mpRoughness ", mpRoughness, 1);
     widget.tooltip(
         "This option enables stochastic depth-of-field when the camera's aperture radius is nonzero. "
         "Disable it to force the use of a pinhole camera.",
@@ -271,11 +273,12 @@ void VBufferRT::executeCompute(RenderContext* pRenderContext, const RenderData& 
 {
     // Create compute pass.
     //std::cout << "compute" << std::endl;
+    FALCOR_PROFILE(pRenderContext,"cs");
     if (!mpComputePass)
     {
         ProgramDesc desc;
         desc.addShaderModules(mpScene->getShaderModules());
-        desc.addShaderLibrary(kProgramComputeFile).csEntry("main");
+        desc.addShaderLibrary(kProgramComputeFile).csEntry("main").setShaderModel(ShaderModel::SM6_6);
         desc.addTypeConformances(mpScene->getTypeConformances());
 
         DefineList defines;
@@ -289,14 +292,44 @@ void VBufferRT::executeCompute(RenderContext* pRenderContext, const RenderData& 
     }
 
     // Bind static resources
-    ShaderVar var = mpComputePass->getRootVar();
-    mpScene->bindShaderDataForRaytracing(pRenderContext, var["gScene"]);
-    mpSampleGenerator->bindShaderData(var);
-    auto impostor = mpScene->getImpostor();
-    impostor->bindShaderData(var["gVBufferRT"]["gImpostor"]);
-    mpComputePass->getProgram()->addDefines(getShaderDefines(renderData));
-    bindShaderData(var, renderData);
+    
+    /*if (impostorInit == false) {
+        ShaderVar var = mpComputePass->getRootVar();
+        mpScene->bindShaderDataForRaytracing(pRenderContext, var["gScene"]);
+        mpSampleGenerator->bindShaderData(var);
+        auto impostor = mpScene->mImpostors[0];
+        impostor->bindShaderData(var["gVBufferRT"]["gImpostor"]);
+        auto impostor2 = mpScene->mImpostors[1];
+        impostor2->bindShaderData(var["gVBufferRT"]["gImpostor2"]);
+        auto impostor3 = mpScene->mImpostors[2];
+        impostor3->bindShaderData(var["gVBufferRT"]["gImpostor3"]);
+        auto impostor4 = mpScene->mImpostors[3];
+        impostor4->bindShaderData(var["gVBufferRT"]["gImpostor4"]);
+        mpComputePass->getProgram()->addDefines(getShaderDefines(renderData));
+        impostorInit = true;
+        bindShaderData(var, renderData);
+    }*/
+    if (!impostorInit)
+    {
+        ShaderVar rootVar = mpComputePass->getRootVar();
 
+        mpScene->bindShaderDataForRaytracing(pRenderContext, rootVar["gScene"]);
+        mpSampleGenerator->bindShaderData(rootVar);
+
+        mpScene->mImpostors[0]->bindShaderData(rootVar["gVBufferRT"]["gImpostor"]);
+       /* mpScene->mImpostors[1]->bindShaderData(rootVar["gVBufferRT"]["gImpostor"]);
+        mpScene->mImpostors[2]->bindShaderData(rootVar["gVBufferRT"]["gImpostor"]);
+        mpScene->mImpostors[3]->bindShaderData(rootVar["gVBufferRT"]["gImpostor"]);
+        mpScene->mImpostors[4]->bindShaderData(rootVar["gVBufferRT"]["gImpostor"]);*/
+
+        impostorInit = true;
+    }
+    
+    // ✅ 每帧重新取 rootVar（轻量）
+    ShaderVar rootVar = mpComputePass->getRootVar();
+    rootVar["gVBufferRT"]["roughness"] = mpRoughness;
+    // ✅ 只绑定 per-frame 数据
+    bindShaderData(rootVar, renderData);
     mpComputePass->execute(pRenderContext, uint3(mFrameDim, 1));
 }
 

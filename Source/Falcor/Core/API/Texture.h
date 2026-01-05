@@ -195,7 +195,7 @@ public:
         ResourceBindFlags bindFlags = ResourceBindFlags::ShaderResource,
         Bitmap::ImportFlags importFlags = Bitmap::ImportFlags::None
     );
-    static ref<Texture> createFromFolder(
+    static std::vector<ref<Texture>> createFromFolder(
         ref<Device> pDevice,
         const std::filesystem::path& path,
         bool generateMipLevels,

@@ -396,7 +396,7 @@ Bitmap::UniqueConstPtr Bitmap::createFromFile(const std::filesystem::path& path,
     }
     break;
     case 32:
-        format = ResourceFormat::BGRA8Unorm;
+        format = ResourceFormat::R32Float;
         break;
     case 24:
         format = ResourceFormat::BGRX8Unorm;

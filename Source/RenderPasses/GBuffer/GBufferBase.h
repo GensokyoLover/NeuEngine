@@ -72,6 +72,7 @@ protected:
     // Internal state
 
     ref<Scene> mpScene;
+    ShaderVar mpVbufferVar;
     sigs::Connection mUpdateFlagsConnection; ///< Connection to the UpdateFlags signal.
     /// IScene::UpdateFlags accumulated since last `beginFrame()`
     IScene::UpdateFlags mUpdateFlags = IScene::UpdateFlags::None;

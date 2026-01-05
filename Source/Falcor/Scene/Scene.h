@@ -1352,8 +1352,7 @@ namespace Falcor
         std::unique_ptr<CameraController> mpCamCtrl;
         std::vector<ref<Camera>> mCameras;
         
-        uint32_t mSelectedCamera = 0;
-        uint32_t mSelectedImpostor = 0;
+        
         float mCameraSpeed = 1.0f;
         bool mCameraSwitched = false;
         bool mCameraControlsEnabled = true;
@@ -1464,10 +1463,12 @@ namespace Falcor
             return mMeshStaticData;
         }
         std::vector<ref<Impostor>> mImpostors;
-        ref<Texture> videoTexture;
+        std::vector < ref<Texture>> videoTexture;
         const SplitVertexBuffer& getMeshStaticData() const
         {
             return mMeshStaticData;
         }
+        uint32_t mSelectedCamera = 0;
+        uint32_t mSelectedImpostor = 0;
     };
 }

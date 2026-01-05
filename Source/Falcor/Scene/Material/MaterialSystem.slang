@@ -28,6 +28,7 @@
 import Scene.Material.TextureHandle;
 import Scene.Material.TextureSampler;
 import Scene.Material.AlphaTest;
+import Scene.Impostor.Impostor;
 import Scene.Lights.LightProfile;
 import Rendering.Volumes.PhaseFunction;
 import Utils.SlangUtils;
@@ -62,7 +63,7 @@ struct MaterialSystem
     static bool kUseLightProfile = MATERIAL_SYSTEM_USE_LIGHT_PROFILE;
     /// IES light profile to use with materials `hasLightProfile(id)` == true
     LightProfile lightProfile;
-
+    
 
     /**
      * When UDIMs are used, this array contains indirection from <UDIM>-1001 to materialTextures.
@@ -73,7 +74,6 @@ struct MaterialSystem
      * and the texture handle is uniform instead.
      */
     StructuredBuffer<int> udimIndirection;
-
     /** Get the total number of materials.
     */
     uint getMaterialCount()

@@ -227,6 +227,7 @@ HitInfo traceSceneRayImpl<let Flags : int>(const bool useAlphaTest, inout RayQue
 [__NoSideEffect] // Required for the performance of reverse-mode auto-diff.
 HitInfo traceSceneRay<let UseAlphaTest : int>(const Ray ray, out float hitT, uint rayFlags, uint instanceInclusionMask)
 {
+    
     // TODO: Use a constant expression to derive static ray flags.
 
     if (UseAlphaTest)

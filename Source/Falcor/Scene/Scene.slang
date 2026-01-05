@@ -37,7 +37,7 @@ __exported import Scene.Lights.EnvMap;
 __exported import Scene.Material.MaterialSystem;
 __exported import Scene.Volume.GridVolume;
 __exported import Scene.SDFs.SDFGrid;
-
+__exported import Scene.Impostor.Impostor;
 import Utils.Attributes;
 import Utils.Math.MathHelpers;
 import Utils.Math.MatrixUtils;
@@ -55,6 +55,9 @@ import Rendering.Materials.TexLODHelpers;
 
 /** Scene data required for rendering.
 */
+
+
+
 struct Scene
 {
     // Raytracing
@@ -114,7 +117,7 @@ struct Scene
     uint gridVolumeCount;
     StructuredBuffer<GridVolume> gridVolumes;
     Grid grids[ArrayMax<1, SCENE_GRID_COUNT>.value]; // Zero-length arrays are not supported.
-
+    //ImpostorData data;
     // Geometry access
 
     /** Return the geometry type for a given global geometry instance ID.

@@ -28,7 +28,7 @@
 #include "Texture.h"
 #include "Device.h"
 #include "Formats.h"
-
+#include <chrono>
 #include "RenderContext.h"
 #include "GFXHelpers.h"
 #include "GFXAPI.h"
@@ -432,8 +432,7 @@ ref<Texture> Texture::createFromFile(
     return pTex;
 }
 
-
-ref<Texture> Texture::createFromFolder(
+std::vector<ref<Texture>> Texture::createFromFolder(
     ref<Device> pDevice,
     const std::filesystem::path& folder,
     bool generateMipLevels,
@@ -443,110 +442,186 @@ ref<Texture> Texture::createFromFolder(
     std::string prefix
 )
 {
-    if (!std::filesystem::exists(folder) || !std::filesystem::is_directory(folder))
+    using Clock = std::chrono::high_resolution_clock;
+    auto tStartAll = Clock::now(); // ⏱️ total
+
+    constexpr uint32_t kChunkSize = 2048;
+    std::vector<ref<Texture>> vec;
+
+    // ------------------------------------------------------------
+    // 0️⃣ 检查目录
+    // ------------------------------------------------------------
+    auto t0 = Clock::now(); // ⏱️ dir check
+
+    if (!std::filesystem::exists(folder) ||
+        !std::filesystem::is_directory(folder))
     {
-        logWarning("Texture::createArrayFromFolder() - '{}' is not a valid directory.", folder);
-        return nullptr;
+        logWarning(
+            "Texture::createFromFolder() - '{}' is not a valid directory.",
+            folder
+        );
+        return vec;
     }
 
-    // 1️⃣ 收集所有图片路径
+    auto t1 = Clock::now();
+
+    // ------------------------------------------------------------
+    // 1️⃣ 扫描子目录
+    // ------------------------------------------------------------
     std::vector<std::filesystem::path> imagePaths;
-    for (auto& entry : std::filesystem::directory_iterator(folder))
+    std::vector<int> idList;
+
+    for (const auto& entry : std::filesystem::directory_iterator(folder))
     {
-        if (!entry.is_regular_file()) continue;
-        auto path = entry.path();
-        auto ext = entry.path().extension().string();
-        
-        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-        if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" || ext == ".exr" || ext == ".hdr")
-        {
-            auto filename = path.filename().string();std::cout << filename << std::endl;
-            if (filename.rfind(prefix, 0) == 0)  // 从头匹配前缀
-            {
-                imagePaths.push_back(entry.path());
-            }
-        }
+        if (!entry.is_directory())
+            continue;
+
+        std::string subdir = entry.path().filename().string();
+        if (subdir.empty() ||
+            !std::all_of(subdir.begin(), subdir.end(), ::isdigit))
+            continue;
+
+        int id = std::stoi(subdir);
+        idList.push_back(id);
+
+
+        std::string filename = prefix + ".exr";
+        imagePaths.push_back(entry.path() / filename);
     }
 
     if (imagePaths.empty())
     {
-        logWarning("Texture::createArrayFromFolder() - No valid images found in '{}'.", folder);
-        return nullptr;
+        logWarning(
+            "Texture::createFromFolder() - No valid images found in '{}'.",
+            folder
+        );
+        return vec;
     }
 
-    // 按文件名排序，确保 array 顺序一致
-    std::sort(imagePaths.begin(), imagePaths.end(),
-        [](const auto& a, const auto& b) { return a.filename().string() < b.filename().string(); });
+    auto t2 = Clock::now();
 
-    // 2️⃣ 先读取第一张，确定尺寸和格式
-    Bitmap::UniqueConstPtr pFirstBmp = Bitmap::createFromFile(imagePaths[0], kTopDown, importFlags);
+    // ------------------------------------------------------------
+    // 2️⃣ 排序
+    // ------------------------------------------------------------
+    std::vector<size_t> order(imagePaths.size());
+    std::iota(order.begin(), order.end(), 0);
+
+    std::sort(order.begin(), order.end(),
+        [&](size_t a, size_t b)
+        {
+            return idList[a] < idList[b];
+        });
+
+    std::vector<std::filesystem::path> sortedPaths;
+    std::vector<int> sortedIds;
+    sortedPaths.reserve(order.size());
+    sortedIds.reserve(order.size());
+
+    for (size_t i : order)
+    {
+        sortedPaths.push_back(imagePaths[i]);
+        sortedIds.push_back(idList[i]);
+    }
+
+    imagePaths = std::move(sortedPaths);
+    idList = std::move(sortedIds);
+
+    auto t3 = Clock::now();
+
+    // ------------------------------------------------------------
+    // 3️⃣ 读取第一张图
+    // ------------------------------------------------------------
+    Bitmap::UniqueConstPtr pFirstBmp =
+        Bitmap::createFromFile(imagePaths[0], kTopDown, importFlags);
+
     if (!pFirstBmp)
     {
-        logWarning("Texture::createArrayFromFolder() - Failed to load first image '{}'.", imagePaths[0]);
-        return nullptr;
+        logWarning(
+            "Texture::createFromFolder() - Failed to load first image '{}'.",
+            imagePaths[0]
+        );
+        return vec;
     }
 
     uint32_t width = pFirstBmp->getWidth();
     uint32_t height = pFirstBmp->getHeight();
     ResourceFormat texFormat = pFirstBmp->getFormat();
-    if (loadAsSrgb) texFormat = linearToSrgbFormat(texFormat);
 
-    uint32_t arraySize = (uint32_t)imagePaths.size();
+    if (loadAsSrgb)
+        texFormat = linearToSrgbFormat(texFormat);
 
-    // 3️⃣ 创建 Texture2D (array)
-    ref<Texture> pTexArray = pDevice->createTexture2D(
-        width,
-        height,
-        texFormat,
-        arraySize,
-        1,
-        nullptr, // 暂不填充数据
-        bindFlags
-    );
+    auto t4 = Clock::now();
 
-    // 4️⃣ 上传每张图的数据
-    for (uint32_t i = 0; i < arraySize; i++)
+    // ------------------------------------------------------------
+    // 4️⃣ 创建 Texture2DArray + 上传
+    // ------------------------------------------------------------
+    uint32_t totalCount = (uint32_t)imagePaths.size();
+    uint32_t chunkCount =
+        (totalCount + kChunkSize - 1) / kChunkSize;
+
+    vec.reserve(chunkCount);
+
+    for (uint32_t chunk = 0; chunk < chunkCount; ++chunk)
     {
-        Bitmap::UniqueConstPtr pBmp = Bitmap::createFromFile(imagePaths[i], kTopDown, importFlags);
-        
-        if (!pBmp)
-        {
-            logWarning("Texture::createArrayFromFolder() - Failed to load image '{}'.", imagePaths[i]);
-            continue;
-        }
+        uint32_t baseIndex = chunk * kChunkSize;
+        uint32_t sliceCount = std::min(
+            kChunkSize,
+            totalCount - baseIndex
+        );
 
-        if (pBmp->getWidth() != width || pBmp->getHeight() != height)
-        {
-            logWarning("Texture::createArrayFromFolder() - Image '{}' size mismatch ({}x{} vs {}x{}), skipping.",
-                imagePaths[i].filename().string(), pBmp->getWidth(), pBmp->getHeight(), width, height);
-            continue;
-        }
-        ref<Texture> tex = pDevice->createTexture2D(
-            pBmp->getWidth(),
-            pBmp->getHeight(),
+        ref<Texture> pTexArray = pDevice->createTexture2D(
+            width,
+            height,
             texFormat,
+            sliceCount,
             1,
-            generateMipLevels ? Texture::kMaxPossible : 1,
-            pBmp->getData(),
+            nullptr,
             bindFlags
         );
-        // 上传到 array slice
-        uint3 offset = uint3(0);
-        uint3 sz = uint3(-1);
-        pDevice->getRenderContext()->copySubresourceRegion(
-            pTexArray.get(), i,
-         tex.get(),0, offset, offset, sz
-        );
+   
+        for (uint32_t localSlice = 0; localSlice < sliceCount; ++localSlice)
+        {
+            uint32_t globalIndex = baseIndex + localSlice;
+
+            Bitmap::UniqueConstPtr pBmp =
+                Bitmap::createFromFile(
+                    imagePaths[globalIndex],
+                    kTopDown,
+                    importFlags
+                );
+
+            if (!pBmp)
+                continue;
+
+            pTexArray->setSubresourceBlob(
+                localSlice,
+                pBmp->getData(),
+                pBmp->getSize()
+            );
+        }
+
+        vec.push_back(pTexArray);
     }
 
-    // 5️⃣ 记录路径信息（用于 debug）
-    pTexArray->setSourcePath(folder);
-    pTexArray->mImportFlags = importFlags;
+    auto t5 = Clock::now();
 
-    logInfo("Loaded TextureArray from '{}', {} layers ({}x{}, format={}).",
-        folder.string(), arraySize, width, height, to_string(texFormat));
+    // ------------------------------------------------------------
+    // ⏱️ 输出统计
+    // ------------------------------------------------------------
+    auto ms = [](auto a, auto b)
+        {
+            return std::chrono::duration<double, std::milli>(b - a).count();
+        };
 
-    return pTexArray;
+    logInfo("Texture::createFromFolder timing:");
+    logInfo("  Dir check        : {:.2f} ms", ms(t0, t1));
+    logInfo("  Scan folders     : {:.2f} ms", ms(t1, t2));
+    logInfo("  Sort IDs         : {:.2f} ms", ms(t2, t3));
+    logInfo("  First image load : {:.2f} ms", ms(t3, t4));
+    logInfo("  Upload textures  : {:.2f} ms", ms(t4, t5));
+    logInfo("  TOTAL            : {:.2f} ms", ms(tStartAll, t5));
+
+    return vec;
 }
 
 gfx::IResource* Texture::getGfxResource() const

@@ -72,14 +72,15 @@ private:
     // UI variables
 
     bool mUseTraceRayInline = false;
+    ShaderVar mpVBufferVar;
     /// Option for enabling depth-of-field when camera's aperture radius is nonzero.
     bool mUseDOF = true;
-
+    bool impostorInit = false;
     struct
     {
         ref<Program> pProgram;
         ref<RtProgramVars> pVars;
     } mRaytrace;
-
+    int mpRoughness;
     ref<ComputePass> mpComputePass;
 };

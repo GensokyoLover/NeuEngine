@@ -1840,6 +1840,7 @@ namespace Falcor
 
     IScene::UpdateFlags Scene::update(RenderContext* pRenderContext, double currentTime)
     {
+        FALCOR_PROFILE(pRenderContext, "SceneUdpate");
         mUpdates = IScene::UpdateFlags::None;
 
         // Perform updates that may affect the scene defines.

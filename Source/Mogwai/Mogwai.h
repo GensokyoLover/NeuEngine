@@ -208,7 +208,7 @@ namespace Mogwai
         KeyCallback mKeyCallback;
         SceneUpdateCallback mSceneUpdateCallback;
         FILE*       mPipedOutput = nullptr;
-
+        int cnt = 0;
         // Scripting
         void registerScriptBindings(pybind11::module& m);
 
