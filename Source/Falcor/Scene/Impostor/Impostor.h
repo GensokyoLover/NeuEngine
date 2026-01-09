@@ -83,7 +83,7 @@ namespace Falcor
         std::string mName;
 
         ref<Texture> mpDepthAtlas;
-        std::vector<ref<Texture>> mpDepthArray;
+        std::vector<ref<Texture>> mpDepthArray[10];
         std::vector<ref<Texture>> mpNormalAtlas;
         ref<Texture> mpAlbedoAtlas;
         ref<Texture> mpFaceIndex;

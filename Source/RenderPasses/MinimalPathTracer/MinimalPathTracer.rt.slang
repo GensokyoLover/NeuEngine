@@ -69,7 +69,7 @@ cbuffer CB
     uint gFrameCount;    // Frame count since scene was loaded.
     uint gPRNGDimension; // First available PRNG dimension.
 }
-
+static float half_tan[101] = { 0.001,  0.004,  0.009,  0.016,  0.025,  0.036,  0.049,  0.064,  0.082,  0.101,  0.123,  0.148,  0.176, 0.206,  0.24,   0.278,  0.32,   0.367,  0.42,   0.478,  0.545,  0.619,  0.703,  0.797,  0.904,  1.024, 1.159,  1.31,   1.479,  1.667,  1.875,  2.104,  2.356,  2.631,  2.931,  3.257,  3.609,  3.989,  4.398, 4.837,  5.306,  5.806,  6.339,  6.905,  7.505,  8.14,   8.811,  9.517,  10.261, 11.042, 11.861, 12.72, 13.616, 14.553, 15.53,  16.545, 17.604, 18.701, 19.84,  21.019, 22.24,  23.503, 24.806, 26.148, 27.535, 28.965, 30.427, 31.94,  33.487, 35.075, 36.705, 38.376, 40.094, 41.833, 43.626, 45.449, 47.325, 49.229, 51.168, 53.134, 55.16,  57.218, 59.297, 61.414, 63.593, 65.795, 68.01,  70.262, 72.586, 74.892, 77.302, 79.672, 82.087, 84.596, 87.085, 89.597, 92.193, 94.731, 97.413, 100.015 };
 // Inputs
 Texture2D<PackedHitInfo> gVBuffer;
 Texture2D<float4> gViewW; // Optional
@@ -86,6 +86,11 @@ RWTexture2D<float4> gMinDepth;
 RWTexture2D<float4> gEmissive;
 RWTexture2D<float4> gView;
 RWTexture2D<float4> gRayPos;
+RWTexture2D<float4> gReflect;
+RWTexture2D<float4> gSphere;
+RWTexture2D<float4> gDebug;
+RWTexture2D<float4> gType;
+RWTexture2D<float4> gType2;
 
 // Static configuration based on defines set from the host.
 #define is_valid(name) (is_valid_##name != 0)
@@ -118,8 +123,10 @@ struct ScatterRayData
     uint pathLength;  ///< Path length in number of path segments (0 at origin, 1 at first secondary hit, etc.). Max 2^31.
     float3 origin;    ///< Next path segment origin.
     float3 direction; ///< Next path segment direction.
-
+    
+    //float4 limited
     SampleGenerator sg; ///< Per-ray state for the sample generator (up to 16B).
+ 
 
     /**
      * Initializes ray payload with default parameters.
@@ -352,6 +359,7 @@ void handleHit(const HitInfo hit, inout ScatterRayData rayData)
     // Check whether to terminate based on max depth.
     if (rayData.pathLength >= kMaxBounces)
     {
+        rayData.origin = sd.computeRayOrigin(false);
         rayData.terminated = true;
         return;
     }
@@ -393,6 +401,30 @@ void handleHit(const HitInfo hit, inout ScatterRayData rayData)
  * @param[in] frameDim Dimension of the frame in pixels.
  * @return Returns the estimated color (radiance).
  */
+bool InsideConeFrustum(
+    float3 P,
+    float3 C,
+    float3 D, // normalized
+    float nearT,
+    float farT,
+    float tanTheta,
+    out float4 bad_type,
+) {
+    float3 v = P - C;
+    float t = dot(v, D);
+    bad_type = float4(t, nearT, farT, 1);
+    if (t < nearT  - 1e-3 || t > farT + 1e-3) {
+            
+            return false;
+    } 
+
+    float dist2 = dot(v, v) - t * t;
+    float radius2 = (t * tanTheta) * (t * tanTheta);
+    //bad_type = float4(0, 1, 0, 1);
+    //return dist2 <= radius2;
+    return true;
+}
+
 
 float3 hash3(uint n)
 {
@@ -421,9 +453,20 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim)
         gDepth[pixel].g = -10;
         gDepth[pixel].b = 1000;
         gMinDepth[DispatchRaysIndex().xy].rgb = 1000;
+        gPosition[pixel] = 0;
+        gAlbedo[pixel] = 0;
+        gSpecular[pixel] = 0;
+        gNormal[pixel] = 0;
+        gRoughness[pixel] = 0;
+        gEmissive[pixel] = 0;
+        gView[pixel] = 0;
+        gRayPos[pixel] = 0;
+        gReflect[pixel] = 0;
+        
  
     }
     gView[DispatchRaysIndex().xy] = float4(-primaryRayDir, 1);
+    
     gRayPos[DispatchRaysIndex().xy] = float4(primaryRayOrigin, 1);
     gDepth[DispatchRaysIndex().xy].w = gDepth[DispatchRaysIndex().xy].w + 1;
     if (hit.isValid())
@@ -498,6 +541,7 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim)
 
         gDepth[DispatchRaysIndex().xy].r = min(depth, gDepth[DispatchRaysIndex().xy].r);
         gDepth[DispatchRaysIndex().xy].g = max(depth, gDepth[DispatchRaysIndex().xy].g);
+        gReflect[DispatchRaysIndex().xy] = float4(reflect(primaryRayDir, brdf.guideNormal ), 1);
         rayReflectData.origin = rayOrigin;
         rayReflectData.direction = reflect(primaryRayDir, brdf.guideNormal);
         rayReflectData.thp = 1;
@@ -534,8 +578,9 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim)
         if (rayReflectData.pathLength == 1)
             gMinDepth[DispatchRaysIndex().xy].rgb =  min(length(rayReflectData.origin - sd.posW), gMinDepth[DispatchRaysIndex().xy].r);
         gDepth[DispatchRaysIndex().xy].b = min(length(rayReflectData.origin - sd.posW), gDepth[DispatchRaysIndex().xy].b);
-        
-        //gDepth[DispatchRaysIndex().xy] = gScene.camera.data.frameWidth;
+
+        // gDepth[DispatchRaysIndex().xy] = gScene.camera.data.frameWidth;
+        //rayData.sphere = gSphere[pixel];
         for (uint depth = 0; depth <= kMaxBounces && !rayData.terminated; depth++)
         {
             // Trace scatter ray. If it hits geometry, the closest hit shader samples
@@ -548,6 +593,31 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim)
 
         // Store contribution from scatter ray.
         outColor += rayData.radiance;
+        // gDebug[pixel] = float4(rayData.radiance , 1);
+        float tnear = gSphere[pixel].w;
+        float tanRadius = half_tan[int(roughness * 100) + 1];
+        float tfar = gSphere[pixel].w * (1 + tanRadius);
+        float4 bad_type = float4(0,0,0,1);
+        // if (length(rayData.origin - gSphere[pixel].xyz) < gSphere[pixel].w)
+
+        if (InsideConeFrustum( rayData.origin, gPosition[pixel].xyz, gReflect[pixel].xyz, tnear, tfar + tfar * tanRadius * 3, tanRadius, bad_type))
+        {
+            gDebug[pixel] = float4(rayData.radiance, 1);
+        }
+        else {
+            gDebug[pixel] = float4(0,0,0,1);
+        }
+        if (rayData.radiance.x == 0) {
+            gType[pixel] = float4(0, 0, 0, 1);
+            gType2[pixel] = float4(0);
+        }
+        else {
+            // gType[pixel] = bad_type;
+            gType[pixel] = float4(gSphere[pixel].xyz,1) * 10 ;
+            gType2[pixel] = float4(tnear);
+            
+        }
+        //outColor += rayData.radiance;
     }
     else
     {
@@ -564,7 +634,9 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim)
         // // gNormal[DispatchRaysIndex().xy] = float4(brdf.guideNormal, 1.f);
         // gNormal[DispatchRaysIndex().xy] = float4(-primaryRayDir, 1.f);
         gRoughness[DispatchRaysIndex().xy] = 0;
-    
+        gDebug[pixel] = float4(0, 0, 0, 1);
+        gType[pixel] = float4(0, 0, 0, 0);
+        gType2[pixel] = float4(0);
     }
 
     return outColor;

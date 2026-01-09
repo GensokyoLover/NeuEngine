@@ -47,37 +47,26 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID)
     if (any(pixel >= gVBufferRT.frameDim))
         return;
 
-    GpuTimer timer;
-    gVBufferRT.beginTime(timer);
-
     const Ray ray = gVBufferRT.generateRay(pixel);
-    float depth_tanh = half_tan[gVBufferRT.roughness];
-    float half_deg = deg[gVBufferRT.roughness];
-    float4 result4;
+    uint r = int(gPreRoughness[pixel].r * 100);
+    float depth_tanh = half_tan[r];
+    float half_deg = deg[r];
     gDepth0[pixel] = float4(0);
     gDepth1[pixel] = float4(0);
     gDepth2[pixel] = float4(0);
     gDir0[pixel] = float4(0);
     gDir1[pixel] = float4(0);
     gDir2[pixel] = float4(0);
-    result4 = gVBufferRT.sampleImpostorSingleViewLevel(pixel, gVBufferRT.gImpostor, ray.dir, ray.origin, 0, depth_tanh);
-    //result4 = float4(depth_tanh);
-    //float4 value = gVBufferRT.sampleImpostorSingleViewLevel(pixel, gVBufferRT.gImpostor, ray.dir, ray.origin, 0, depth_tanh);
-    float2 uv = pixel / 512.0;
-    // float4 value = SingleSampleImpostorPoint(gVBufferRT.gImpostor.texDepthArray,
-    //                                     gVBufferRT.gImpostor.samplerPoint[0],
-    //                                     0,
-    //                                     uv, 0);
-    // gDepth0[pixel] = result4;
-    // gDepth1[pixel] = float4(gVBufferRT.gImpostor.cRight[0][0], 1.0);
-    // gDepth2[pixel] = float4(gVBufferRT.gImpostor.cRight[0][1], 1.0);
-    // gDir0[pixel] = float4(gVBufferRT.gImpostor.cRight[0][2],1.0);
-    // gDir1[pixel] = float4(5);
-    // gDir2[pixel] = float4(6);
-    gVBufferRT.writeAux(pixel, result4);
-    
-    // gVBufferRT.writeAux(pixel, result4);
-
+    float miDepth = 1000;
+    if (any(gPrePosition[pixel].xyz != float3(0, 0, 0)) || any(gPreDirection[pixel].xyz != float3(0, 0, 0))) {
+        float4 result4 = gVBufferRT.sampleImpostorSingleViewLevel( pixel, gVBufferRT.gImpostor, gPreDirection[pixel].xyz, gPrePosition[pixel].xyz, 0, depth_tanh );
+        //float4 result4 =float4(4);
+        gVBufferRT.writeAux(pixel, result4);
+    }
+    else {
+ 
+        gVBufferRT.writeAux(pixel, float4(0,0,0,0));
+    }
     //gVBufferRT.writeDebug(pixel, float4(float(endlevel)/3));
     //gVBufferRT.writeAux(pixel, depth_tanh/100.0);
 
@@ -95,5 +84,5 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID)
     // }
 
 
-    gVBufferRT.endTime(pixel, timer);
+    //gVBufferRT.endTime(pixel, timer);
 }

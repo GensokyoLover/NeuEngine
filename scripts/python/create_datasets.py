@@ -18,7 +18,7 @@ def setup_renderpass(testbed):
     render_graph.mark_output("AccumulatePass.output")
     testbed.render_graph = render_graph
 
-def render_graph_MinimalPathTracer(testbed):
+def render_graph_MinimalPathTracer_Old(testbed):
     g = testbed.create_render_graph("MinimalPathTracer")
     g.create_pass("AccumulatePass","AccumulatePass", {'enabled': True, 'precisionMode': 'Single'})
     g.create_pass("ToneMapper","ToneMapper", {'autoExposure': False, 'exposureCompensation': 0.0})
@@ -60,6 +60,61 @@ def render_graph_ImpostorTracer(testbed):
     g.markOutput("ImpostorTracer.depth")
     g.markOutput("AccumulatePass.output")
     testbed.render_graph = g
+def render_graph_MinimalPathTracer(testbed):
+    g = testbed.create_render_graph("MinimalPathTracer")
+    g.create_pass("AccumulatePass", "AccumulatePass",{'enabled': True, 'precisionMode': 'Single'})
+    
+    g.create_pass("ToneMapper", "ToneMapper",{'autoExposure': False, 'exposureCompensation': 0.0})
+    g.create_pass("MinimalPathTracer","MinimalPathTracer", {'maxBounces': 0})
+    
+    g.create_pass("VBufferRT","VBufferRT", {'samplePattern': 'Stratified', 'sampleCount': 16,"useTraceRayInline":False})
+    #g.create_pass("AccumulatePass2", "AccumulatePass",{'enabled': True, 'precisionMode': 'Single'})
+    #g.create_pass("MinimalPathTracer2", "MinimalPathTracer",{'maxBounces': 0})
+    g.create_pass("VBufferRT2","VBufferRT", {'samplePattern': 'Stratified', 'sampleCount': 16,"useTraceRayInline":True})
+    g.addEdge("AccumulatePass.output", "ToneMapper.src")
+    g.addEdge("VBufferRT.vbuffer", "MinimalPathTracer.vbuffer")
+    
+    g.addEdge("VBufferRT.viewW", "MinimalPathTracer.viewW")
+    g.addEdge("MinimalPathTracer.color", "AccumulatePass.input")
+    #g.addEdge("VBufferRT.vbuffer", "MinimalPathTracer2.vbuffer")
+    # g.addEdge("VBufferRT.viewW", "MinimalPathTracer2.viewW")
+    g.addEdge("MinimalPathTracer.position", "VBufferRT2.prePosition")
+    g.addEdge("MinimalPathTracer.reflect", "VBufferRT2.preDirection")
+    g.addEdge("MinimalPathTracer.roughness", "VBufferRT2.preRoughness")
+    
+    g.markOutput("MinimalPathTracer.color")
+    g.markOutput("MinimalPathTracer.position")
+    g.markOutput("MinimalPathTracer.albedo")
+    g.markOutput("MinimalPathTracer.specular")
+    g.markOutput("MinimalPathTracer.normal")
+    g.markOutput("MinimalPathTracer.roughness")
+    g.markOutput("MinimalPathTracer.depth")
+    g.markOutput("MinimalPathTracer.emission")
+    g.markOutput("AccumulatePass.output")
+    g.markOutput("MinimalPathTracer.view")
+    g.markOutput("MinimalPathTracer.raypos")
+    g.markOutput("MinimalPathTracer.mind")
+    g.markOutput("MinimalPathTracer.reflect")
+    g.markOutput("VBufferRT2.depth0")
+    g.markOutput("VBufferRT2.depth1")
+    g.markOutput("VBufferRT2.depth2")
+    g.markOutput("VBufferRT2.direction0")
+    g.markOutput("VBufferRT2.direction1")
+    g.markOutput("VBufferRT2.direction2")
+    testbed.render_graph = g
+def render_graph_MinimalPathTracer_Debug(testbed):
+    g = testbed.create_render_graph("MinimalPathTracer")
+    VBufferRT = g.create_pass("VBufferRT", "VBufferRT",{'samplePattern': 'Stratified', 'sampleCount': 1,"useTraceRayInline":True,})
+    #g.addPass(VBufferRT, "VBufferRT")
+
+    g.markOutput("VBufferRT.depth0")
+    g.markOutput("VBufferRT.depth1")
+    g.markOutput("VBufferRT.depth2")
+    g.markOutput("VBufferRT.direction0")
+    g.markOutput("VBufferRT.direction1")
+    g.markOutput("VBufferRT.direction2")
+    testbed.render_graph = g
+
 
 import numpy as np
 
@@ -106,9 +161,12 @@ def save_compressed_pickle(data, file_path):
         f.write(compressed_data)
 
 
-object_data_list = ["color","position","albedo","specular","normal","roughness","depth","emission","AccumulatePassoutput","view","raypos","mind"]
+object_data_list = ["color","position","albedo","specular","normal","roughness","depth","emission","AccumulatePassoutput","view","raypos","mind","reflect","idepth0","idepth1","idepth2","idirection0","idirection1","idirection2"]
+#object_data_list = ["idepth0","idepth1","idepth2","idirection0","idirection1","idirection2"]
 object_key_dict = {name: i for i, name in enumerate(object_data_list)}
-sellect_list = ["albedo","specular","normal","position","view","AccumulatePassoutput","roughness","raypos","depth","emission","mind"]
+sellect_list = ["albedo","specular","normal","position","view","AccumulatePassoutput","roughness","raypos","depth","emission","mind","reflect","idepth0","idepth1","idepth2","idirection0","idirection1","idirection2"]
+#sellect_list = ["albedo","specular","normal","position","view","AccumulatePassoutput","roughness","raypos","depth","emission","mind","reflect"]
+#sellect_list = ["idepth0","idepth1","idepth2","idirection0","idirection1","idirection2"]
 #object_data_list = ["color","position","albedo","specular","normal","roughness","depth","AccumulatePassoutput"]
 def pack_object_data(path,camera_resolution,direction_resolution):
     data = {}
@@ -146,7 +204,7 @@ def _uniform_step01(a: float, b: float) -> float:
 
 def sample_roughness() -> float:
 
-    return _uniform_step01(0.09, 0.12)
+    return _uniform_step01(0.01, 0.15)
 
 import multiprocessing as mp
 def worker_process(worker_id, resolution, scene_path,
@@ -169,7 +227,7 @@ def worker_process(worker_id, resolution, scene_path,
         height=resolution,
         create_window=False,
         device=device,
-        spp=1024
+        spp=500
     )
     render_graph_MinimalPathTracer(testbed)
     testbed.load_scene(scene_path)
@@ -184,10 +242,14 @@ def worker_process(worker_id, resolution, scene_path,
         if len(task) == 2:
             i, output_path = task  # task payload
             r = sample_roughness()
-            testbed.scene.set_roughness("Wall", r )
+       
+            testbed.scene.set_roughness("Floor", r )
             cam = testbed.scene.camera
-            cam.position = np.random.uniform(-0.3, 0.3, size=[3]) + np.array([0.0, 0.25, 1.2])
-            cam.target = np.array([0.0, -0.5, 0.0]) + np.random.uniform(-0.3, 0.3, size=[3])
+            ps = np.random.uniform(-2, 2, size=[3]) + np.array([0.0, 1.0, 0.0])
+            ps[1] = ps[1] * 0.4
+            cam.position = ps
+
+            cam.target = np.array([0.0,0.0, 0.0]) + np.random.uniform(-0.3, 0.3, size=[3])
             rand_state = {
                 "roughness": float(r),
                 "camera": {
@@ -219,6 +281,7 @@ def worker_process(worker_id, resolution, scene_path,
 
         for name in select_list:
             index = object_data_dict[name]
+            print(index)
             testbed.capture_output(
                 level_output_path + f'{name}_{i:05d}.exr',
                 index
@@ -230,7 +293,7 @@ def worker_process(worker_id, resolution, scene_path,
         with open(level_output_path + "camera.json","w") as f:
             json.dump(camera_data, f, indent=4, ensure_ascii=False)
         result_queue.put((i, rand_state))
-def start_render_farm(resolution, scene_path,occlution_path, output_path,
+def start_render_farm(resolution, scene_path, output_path,
                       object_data_dict, select_list,
                       num_workers=8, num_frames=500):
 
@@ -242,7 +305,7 @@ def start_render_farm(resolution, scene_path,occlution_path, output_path,
     for wid in range(num_workers):
         p = mp.Process(
             target=worker_process,
-            args=(wid, resolution, scene_path,occlution_path,
+            args=(wid, resolution, scene_path,
                   object_data_dict, select_list,
                   task_queue,result_queue)
         )
@@ -439,37 +502,21 @@ def render(resolution,testbed,scene_path,output_path,object_data_dict,sellect_li
             
 def main():
     label ="test"
-    scene_path = r'H:\Falcor\media\inv_rendering_scenes\bunny_ref_nobunny.pyscene'
-    occlution_path = r'H:\Falcor\media\inv_rendering_scenes\bunny_ref.pyscene'
-    nolight_path = r'H:\Falcor\media\inv_rendering_scenes\bunny_ref_nolight.pyscene'
+    scene_path = r'H:\Falcor\scenes\dragon_ref.pyscene'
     resolution = 512
     scale_path = scene_path.replace('.pyscene','') + "_{}/".format(resolution)
     output_path = scene_path.replace('.pyscene','') + "{}/".format(label)
-    occ_output_path = occlution_path.replace('.pyscene','') + "{}/".format(label)
-    nolight_output_path = nolight_path.replace('.pyscene','') + "{}/".format(label)
     if os.path.exists(output_path) == False:
         os.makedirs(output_path)
-    if os.path.exists(occ_output_path) == False:
-        os.makedirs(occ_output_path)
-    if os.path.exists(nolight_output_path) == False:
-        os.makedirs(nolight_output_path)
+
     # Create device and setup renderer.
-    device = falcor.Device(type=falcor.DeviceType.Vulkan, gpu=0, enable_debug_layer=False)
-    testbed = falcor.Testbed(width=resolution, height=resolution, create_window=False, device=device,spp=256000)
-    
-    outputPath = r'H:\\falcor\\image\\'
-    render_graph_MinimalPathTracer(testbed)
-    start_render_farm2(
+    start_render_farm(
         resolution=512,
         scene_path=scene_path,
-        occlution_path=occlution_path,
-        nolight_path = nolight_path,
         output_path=output_path,
-        occ_output_path=occ_output_path,
-        nolight_output_path = nolight_output_path,
         object_data_dict=object_key_dict,
         select_list=sellect_list,
-        num_workers=8,
+        num_workers=1,
         num_frames=500
     )
 

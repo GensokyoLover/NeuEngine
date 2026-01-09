@@ -34,7 +34,8 @@ namespace
 {
 const std::string kProgramRaytraceFile = "RenderPasses/GBuffer/VBuffer/VBufferRT.rt.slang";
 //const std::string kProgramComputeFile = "RenderPasses/GBuffer/VBuffer/VBufferRT.cs.slang";
-const std::string kProgramComputeFile = "RenderPasses/GBuffer/VBuffer/ImpostorRT.cs.slang";
+const std::string kProgramComputeFile = "RenderPasses/GBuffer/VBuffer/ReflectionImpostorRT.cs.slang";
+//const std::string kProgramComputeFile = "RenderPasses/GBuffer/VBuffer/ImpostorRT.cs.slang";
 
 // Scripting options.
 const char kUseTraceRayInline[] = "useTraceRayInline";
@@ -47,7 +48,13 @@ const uint32_t kMaxRecursionDepth = 1;
 
 const std::string kVBufferName = "vbuffer";
 const std::string kVBufferDesc = "V-buffer in packed format (indices + barycentrics)";
-
+const ChannelList kInputChannels = {
+    // clang-format off
+    { "prePosition",        "gPrePosition",     "Visibility buffer in packed format", true },
+    { "preDirection",    "gPreDirection",       "World-space view direction (xyz float format)", true},
+    { "preRoughness",    "gPreRoughness",       "World-space view direction (xyz float format)", true},
+    // clang-format on
+};
 // Additional output channels.
 const ChannelList kVBufferExtraChannels = {
     // clang-format off
@@ -65,6 +72,9 @@ const ChannelList kVBufferExtraChannels = {
     { "depth0",           "gDepth0",            "Depth0",                             true /* optional */, ResourceFormat::RGBA32Float    },
     { "depth1",           "gDepth1",            "Depth1",                             true /* optional */, ResourceFormat::RGBA32Float    },
     { "depth2",           "gDepth2",            "Depth2",                             true /* optional */, ResourceFormat::RGBA32Float    },
+    { "direction0",           "gDir0",            "Depth0",                             true /* optional */, ResourceFormat::RGBA32Float    },
+    { "direction1",           "gDir1",            "Depth1",                             true /* optional */, ResourceFormat::RGBA32Float    },
+    { "direction2",           "gDir2",            "Depth2",                             true /* optional */, ResourceFormat::RGBA32Float    },
     { "referencealbedo",           "gReferenceAlbedo",            "Referencealbedo",                             true /* optional */, ResourceFormat::RGBA32Float    },
     { "referencedepth",           "gReferenceDepth",            "Referencedepth",                             true /* optional */, ResourceFormat::RGBA32Float    },
     { "debug",           "gDebug",            "Debug",                             true /* optional */, ResourceFormat::RGBA32Float    },
@@ -91,7 +101,8 @@ RenderPassReflection VBufferRT::reflect(const CompileData& compileData)
 {
     RenderPassReflection reflector;
     const uint2 sz = RenderPassHelpers::calculateIOSize(mOutputSizeSelection, mFixedOutputSize, compileData.defaultTexDims);
-
+    if(mUseTraceRayInline)
+        addRenderPassInputs(reflector, kInputChannels);
     // Add the required output. This always exists.
     reflector.addOutput(kVBufferName, kVBufferDesc)
         .bindFlags(ResourceBindFlags::UnorderedAccess)
@@ -130,8 +141,8 @@ void VBufferRT::execute(RenderContext* pRenderContext, const RenderData& renderD
             renderData.getDictionary()[Falcor::kRenderPassPRNGDimension] = mComputeDOF ? 2u : 0u;
         }
 
-        //mUseTraceRayInline ? executeCompute(pRenderContext, renderData) : executeRaytrace(pRenderContext, renderData);
-        executeCompute(pRenderContext, renderData);
+        mUseTraceRayInline ? executeCompute(pRenderContext, renderData) : executeRaytrace(pRenderContext, renderData);
+        //executeCompute(pRenderContext, renderData);
         mUpdateFlags = IScene::UpdateFlags::None;
         mFrameCount++;
     }
@@ -156,7 +167,11 @@ void VBufferRT::renderUI(Gui::Widgets& widget)
     {
         mOptionsChanged = true;
     }
-    widget.var("mpRoughness ", mpRoughness, 1);
+    
+    widget.var("mpRoughness ", mpRoughness, 0,100);
+    //for (int i = 0; i < mpScene->mImpostors.size(); i++) {
+    //    widget.var(std::to_string(i).c_str()+"impostor ", mpRoughness, 0, 100);
+    //}
     widget.tooltip(
         "This option enables stochastic depth-of-field when the camera's aperture radius is nonzero. "
         "Disable it to force the use of a pinhole camera.",
@@ -278,9 +293,9 @@ void VBufferRT::executeCompute(RenderContext* pRenderContext, const RenderData& 
     {
         ProgramDesc desc;
         desc.addShaderModules(mpScene->getShaderModules());
-        desc.addShaderLibrary(kProgramComputeFile).csEntry("main").setShaderModel(ShaderModel::SM6_6);
+        desc.addShaderLibrary(kProgramComputeFile).csEntry("main");
         desc.addTypeConformances(mpScene->getTypeConformances());
-
+        desc.addCompilerArguments({ "-O0", "-g" });
         DefineList defines;
         defines.add(mpScene->getSceneDefines());
         defines.add(mpSampleGenerator->getDefines());
@@ -309,25 +324,29 @@ void VBufferRT::executeCompute(RenderContext* pRenderContext, const RenderData& 
         impostorInit = true;
         bindShaderData(var, renderData);
     }*/
-    if (!impostorInit)
-    {
-        ShaderVar rootVar = mpComputePass->getRootVar();
-
-        mpScene->bindShaderDataForRaytracing(pRenderContext, rootVar["gScene"]);
-        mpSampleGenerator->bindShaderData(rootVar);
-
-        mpScene->mImpostors[0]->bindShaderData(rootVar["gVBufferRT"]["gImpostor"]);
-       /* mpScene->mImpostors[1]->bindShaderData(rootVar["gVBufferRT"]["gImpostor"]);
-        mpScene->mImpostors[2]->bindShaderData(rootVar["gVBufferRT"]["gImpostor"]);
-        mpScene->mImpostors[3]->bindShaderData(rootVar["gVBufferRT"]["gImpostor"]);
-        mpScene->mImpostors[4]->bindShaderData(rootVar["gVBufferRT"]["gImpostor"]);*/
-
-        impostorInit = true;
-    }
     
-    // ✅ 每帧重新取 rootVar（轻量）
     ShaderVar rootVar = mpComputePass->getRootVar();
+
+    mpScene->bindShaderDataForRaytracing(pRenderContext, rootVar["gScene"]);
+    mpSampleGenerator->bindShaderData(rootVar);
+    
+    mpScene->mImpostors[0]->bindShaderData(rootVar["gVBufferRT"]["gImpostor"]);
+    /* mpScene->mImpostors[1]->bindShaderData(rootVar["gVBufferRT"]["gImpostor"]);
+    mpScene->mImpostors[2]->bindShaderData(rootVar["gVBufferRT"]["gImpostor"]);
+    mpScene->mImpostors[3]->bindShaderData(rootVar["gVBufferRT"]["gImpostor"]);
+    mpScene->mImpostors[4]->bindShaderData(rootVar["gVBufferRT"]["gImpostor"]);*/
+
+    impostorInit = true;
+   
+
+    printf("now frame %d\n", mFrameCount);
+    printf("now impostorsize %d\n", int(mpScene->mImpostors.size()));
+    // ✅ 每帧重新取 rootVar（轻量）
+   // ShaderVar rootVar = mpComputePass->getRootVar();
     rootVar["gVBufferRT"]["roughness"] = mpRoughness;
+    rootVar["gPrePosition"] = renderData.getTexture("prePosition");
+    rootVar["gPreDirection"] = renderData.getTexture("preDirection");
+    rootVar["gPreRoughness"] = renderData.getTexture("preRoughness");
     // ✅ 只绑定 per-frame 数据
     bindShaderData(rootVar, renderData);
     mpComputePass->execute(pRenderContext, uint3(mFrameDim, 1));

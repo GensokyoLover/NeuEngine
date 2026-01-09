@@ -63,11 +63,14 @@ namespace Falcor
         invTexDim = 1.0f / float2(texDim);
         baseCameraResolution = j["baseCameraResolution"].get<int>();
         if (level == 0) {
-            mpNormalAtlas = Texture::createFromFolder(pDevice, folderPath , false, false, ResourceBindFlags::ShaderResource, Bitmap::ImportFlags::None,"2normal");
+            mpNormalAtlas = Texture::createFromFolder(pDevice, folderPath , false, false, ResourceBindFlags::ShaderResource, Bitmap::ImportFlags::None,"normal");
             mpAlbedoAtlas = Texture::createFromFile(pDevice, folderPath + "\\albedo_atlas.exr", false, false, ResourceBindFlags::ShaderResource, Bitmap::ImportFlags::None);
         }
+        for (int i = 0; i < 10; i++) {
+            std::string pre =std::to_string(i) + "depth";
+            mpDepthArray[i] = Texture::createFromFolder(pDevice, folderPath, false, false, ResourceBindFlags::ShaderResource, Bitmap::ImportFlags::None, pre);
+        }
         
-        mpDepthArray = Texture::createFromFolder(pDevice, folderPath, false, false, ResourceBindFlags::ShaderResource, Bitmap::ImportFlags::None,"2depth");
         mpDepthAtlas = Texture::createFromFile(pDevice, folderPath + "\\depth_atlas.exr", false, false, ResourceBindFlags::ShaderResource, Bitmap::ImportFlags::None);
         Bitmap::UniqueConstPtr pBitmap = Bitmap::createFromFile(folderPath + "\\lookup_uint16.png",true, Bitmap::ImportFlags::None);
         mpFaceIndex = pDevice->createTexture2D(
@@ -259,16 +262,9 @@ namespace Falcor
             var["texAlbedoAtlas"] = mpAlbedoAtlas;
         }
         var["texDepthAtlas"][level] = mpDepthAtlas;
-        if (level < 3) 
-            var["texDepthArray"][level] = mpDepthArray[0];
-        else if (level == 3) {
-            var["texDepthArray"][level] = mpDepthArray[0];
-            var["texDepthArray"][level + 1] = mpDepthArray[1];
-        }
-        else if (level == 4) {
-            var["texDepthArray"][level + 1] = mpDepthArray[0];
-            var["texDepthArray"][level + 2] = mpDepthArray[1];
-        }
+        for(int i= 0; i < 10;i++)
+            var["texDepthArray"][i] = mpDepthArray[i][0];
+   
         var["texFaceIndex"][level] = mpFaceIndex;
         var["samplerLinear"][level] = mpLinearSampler;
         var["samplerPoint"][level] = mpPointSampler;

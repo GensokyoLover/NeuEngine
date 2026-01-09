@@ -49,6 +49,7 @@ const ChannelList kInputChannels = {
     // clang-format off
     { "vbuffer",        "gVBuffer",     "Visibility buffer in packed format" },
     { kInputViewDir,    "gViewW",       "World-space view direction (xyz float format)", true /* optional */ },
+    { "sphere",    "gSphere",       "World-space view direction (xyz float format)", true /* optional */},
     // clang-format on
 };
 
@@ -64,7 +65,11 @@ const ChannelList kOutputChannels = {
     { "emission",          "gEmissive", "Output color (sum of direct and indirect)", false, ResourceFormat::RGBA32Float },
     { "view",          "gView", "Output color (sum of direct and indirect)", false, ResourceFormat::RGBA32Float },
     { "raypos",          "gRayPos", "Output color (sum of direct and indirect)", false, ResourceFormat::RGBA32Float },
-    { "mind",          "gMinDepth", "Output color (sum of direct and indirect)", false, ResourceFormat::RGBA32Float }
+    { "mind",          "gMinDepth", "Output color (sum of direct and indirect)", false, ResourceFormat::RGBA32Float },
+    { "reflect",          "gReflect", "Output color (sum of direct and indirect)", false, ResourceFormat::RGBA32Float },
+    { "debug",          "gDebug", "Output color (sum of direct and indirect)", false, ResourceFormat::RGBA32Float },
+    { "type",          "gType", "Output color (sum of direct and indirect)", false, ResourceFormat::RGBA32Float },
+    { "type2",          "gType2", "Output color (sum of direct and indirect)", false, ResourceFormat::RGBA32Float },
    // { "fresenel",          "gFresnel", "Output color (sum of direct and indirect)", false, ResourceFormat::R32Float },
     // clang-format on
 };
@@ -184,7 +189,9 @@ void MinimalPathTracer::execute(RenderContext* pRenderContext, const RenderData&
 
     // Set constants.
     auto var = mTracer.pVars->getRootVar();
+    //var["CB"]["gFrameCount"] = mFrameCount;
     var["CB"]["gFrameCount"] = pRenderContext->gframeCount;
+    printf("minipath %d\n", pRenderContext->gframeCount);
    // printf("frame %d\n", pRenderContext->gframeCount);
     var["CB"]["gPRNGDimension"] = dict.keyExists(kRenderPassPRNGDimension) ? dict[kRenderPassPRNGDimension] : 0u;
 

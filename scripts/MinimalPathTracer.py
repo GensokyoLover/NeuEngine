@@ -11,6 +11,7 @@ def render_graph_MinimalPathTracer():
     MinimalPathTracer = createPass("MinimalPathTracer", {'maxBounces': 3})
     g.addPass(MinimalPathTracer, "MinimalPathTracer")
     VBufferRT = createPass("VBufferRT", {'samplePattern': 'Stratified', 'sampleCount': 16})
+    VBufferRT = createPass("VBufferRT", {'samplePattern': 'Stratified', 'sampleCount': 16})
     g.addPass(VBufferRT, "VBufferRT")
     g.addEdge("AccumulatePass.output", "ToneMapper.src")
     g.addEdge("VBufferRT.vbuffer", "MinimalPathTracer.vbuffer")

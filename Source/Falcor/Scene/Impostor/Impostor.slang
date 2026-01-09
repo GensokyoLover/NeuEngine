@@ -29,7 +29,7 @@ struct Impostor
 
     Texture2DArray<float4> texNormalArray[2];
     Texture2D<float4> texDepthAtlas[5];
-    Texture2DArray<float4> texDepthArray[7];
+    Texture2DArray<float4> texDepthArray[10];
     Texture2D<float4> texAlbedoAtlas;
     Texture2D<uint> texFaceIndex[5];
     SamplerState samplerLinear[5];
@@ -70,7 +70,24 @@ float4 SampleImpostorPoint(
     );
 }
 
+float4 SingleSampleImpostorPoint(
+    Texture2DArray<float4> texArray[],
+    SamplerState samplerPoint,
+    uint sliceId,
+    float2 uv,
+    int level
+)
+{
+    uint arrayId, layerId;
+    DecodeSlice(sliceId, arrayId, layerId);
 
+    // 强烈建议显式 SampleLevel，避免隐式 LOD
+    return texArray[arrayId + level].SampleLevel(
+        samplerPoint,
+        float3(uv, layerId),
+        0.0f
+    );
+}
 
 float4 SampleImpostorPointSingle(
     Texture2DArray<float4> texArray[],
