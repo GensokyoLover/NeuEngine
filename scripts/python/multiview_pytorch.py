@@ -1,7 +1,15 @@
 import sys
 import os
-os.environ["PATH"]      = r"H:/Falcor\build\windows-vs2022\bin\Debug" + os.environ["PATH"]
-sys.path.append( r"H:/Falcor\build\windows-vs2022\bin\Debug/python")
+## 根据不同的系统选择不同的path，windows or linux
+import platform
+
+os_name = platform.system()
+if os_name == "Windows":
+    os.environ["PATH"]      = r"H:/Falcor\build\windows-vs2022\bin\Debug" + os.environ["PATH"]
+    sys.path.append( r"H:/Falcor\build\windows-vs2022\bin\Debug/python")
+else:
+    os.environ["LD_LIBRARY_PATH"] = r"/seaweedfs_tmp/training/wangjiu/new/NeuEngine/build/linux-clang/bin/Debug"+ os.environ["PATH"]
+    sys.path.append( r"/seaweedfs_tmp/training/wangjiu/new/NeuEngine/build/linux-clang/bin/Debug/python")
 import falcor
 import numpy as np
 from impostor import *
@@ -229,8 +237,10 @@ def main():
     # pyexr.write("./lookup.exr",lookup_loaded)
 
     finest_resolution = 512
-    
-    folder_path = r"H:\Falcor\scenes/impostor/" 
+    if os_name == "Windows":
+        folder_path = r"H:\Falcor\scenes/impostor/" 
+    else:
+        folder_path = r"/seaweedfs_tmp/training/wangjiu/new/NeuEngine/scenes/impostor/"
     
     resolution_list = [1024,512,182,64,24,8]
     file_list = os.listdir(folder_path)
@@ -244,7 +254,7 @@ def main():
         
         scene_name = file.split(".")[0]
         scene_path = folder_path + file
-        output_folder =  r"H:\Falcor\datasets/impostor/" + scene_name + "/"
+        output_folder =  folder_path + scene_name + "/"
 
         os.makedirs(output_folder, exist_ok=True)
         # Create device and setup renderer.

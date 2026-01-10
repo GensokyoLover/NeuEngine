@@ -37,7 +37,7 @@ def renderdata_preprocess(path,test=False):
             sample[key] = torch.Tensor(data).cuda()  # shape: (H,W,C)
         sample["sampleView"] = torch.cat([sample["idirection0"][...,3:4],sample["idirection1"][...,3:4],sample["idirection2"][...,3:4]],dim=-1)
         #pyexr.write("H:/Falcor/media/inv_rendering_scenes/object_level_config/Bunny/{}roughness.exr".format(scene_id),sample["roughness"].cpu().numpy()) 
-        sample["mask"] = (sample["position"].sum(dim=-1,keepdim=True)!=0)  & (sample["normal"][...,2:3]<0.01)  & (sample["emission"].sum(dim=-1,keepdim=True)==0) & (sample["idepth0"][...,0:1] != 0) & (sample["idepth1"][...,0:1] != 0) & (sample["idepth2"][...,0:1] != 0)
+        sample["mask"] =(sample["AccumulatePassoutput"].sum(dim=-1,keepdim=True)!=0) & (sample["position"].sum(dim=-1,keepdim=True)!=0)  & (sample["normal"][...,2:3]<0.01)  & (sample["emission"].sum(dim=-1,keepdim=True)==0) & (sample["idepth0"][...,0:1] != 0) & (sample["idepth1"][...,0:1] != 0) & (sample["idepth2"][...,0:1] != 0)
         #sample["mask"] = (sample["position"].sum(dim=-1,keepdim=True)!=0) & (sample["roughness"] > 0.0001) & (sample["normal"][...,2:3]<0.1)
         if sample["mask"].sum() < 1:
             print("continue ",scene_id)
@@ -162,6 +162,7 @@ def load_impostor2(path):
         impostor.texDict[key] = torch.zeros((42, 512, 512, buffer_channel[key])).cuda()
     for key in ["depth", "position","raypos"]:
         impostor.texDict[key] = impostor.texDict[key] * scale
+    impostor.cPosition = impostor.cPosition * scale
     subdirs = [
         d for d in os.listdir(path)
         if os.path.isdir(os.path.join(path, d))
@@ -198,6 +199,6 @@ def load_impostor2(path):
 
 
 if __name__ == "__main__":
-    path = r"H:\Falcor\datasets\renderdata/flame/"
-    renderdata_preprocess(path,test=False)
-    # load_impostor2(r"H:\Falcor\datasets\impostor\flame\level1/")
+    # path = r"H:\Falcor\datasets\renderdata/flame/"
+    # renderdata_preprocess(path,test=False)
+    load_impostor2(r"H:\Falcor\datasets\impostor\flame\level1/")

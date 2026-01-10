@@ -15,8 +15,8 @@ def main():
 
     scene_path = 'test_scenes/cornell_box.pyscene'
 
-    # Create device and setup renderer.
     device = falcor.Device(type=falcor.DeviceType.D3D12, gpu=0, enable_debug_layer=False)
+    # Create device and setup renderer.
     testbed = falcor.Testbed(width=1920, height=1080, create_window=True, device=device)
     setup_renderpass(testbed)
 

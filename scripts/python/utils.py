@@ -580,7 +580,9 @@ def trilinear_mipmap_sample(textures, ranges):
     l0 = torch.floor(lod).long()
     l1 = (l0 + 1).clamp(max=max_level)
     w  = (lod - l0.float()).unsqueeze(1)  # (B,1,H,W)
-
+    # pyexr.write(r"H:/Falcor/debug/l0.exr",l0[0].cpu().numpy())
+    # pyexr.write(r"H:/Falcor/debug/l1.exr",l1[0].cpu().numpy())
+    # pyexr.write(r"H:/Falcor/debug/w.exr",w[0].permute(1,2,0).cpu().numpy())
     # ---- 2. sampling center ----
     u = 0.5 * (u0 + u1)
     v = 0.5 * (v0 + v1)

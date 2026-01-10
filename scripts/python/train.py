@@ -151,7 +151,7 @@ theta95_deg = ggx_theta_from_roughness(roughness, alpha_is_roughness_sq=True, de
 # dataset_process(r"H:/Falcor/media/inv_rendering_scenes/bunny_ref_nobunny_roughnesscorrect/",impostor)
 # exit()
 impostor =load_zst(r"H:\Falcor\datasets\impostor\flame\level1/impostor.pkl.zst")
-label = "roughness_9"
+label = "roughness_9_3_cylinder_encoder2"
 log_dir = "./runs/{}".format(label)
 ensure_dir(log_dir)
 writer = SummaryWriter(log_dir=log_dir)
@@ -240,9 +240,10 @@ for epoch in range(num_epochs):
                 depthDownList.append(min_downsample_pool(depth, 4**(level+1)))
                 positionDownList.append(mean_downsample_pool(origin, 4**(level+1)))
                 emissionDownList[b].append(mean_downsample_pool(emission[b:b+1,...], 4**(level+1)).permute(0,3,1,2))
-            
+        
         gbuffer_input = sellect_gbuffer_data(train_data, ["position", "normal", "roughness", "view"])
         feature_list = []
+        #print(train_data["roughness"].mean())
         for b in range(3):
             emission_feature = emissive_encoder(emission[b:b+1,...])
             feature = trilinear_mipmap_sample(emission_feature,train_data["uv{}".format(b)])
@@ -250,9 +251,17 @@ for epoch in range(num_epochs):
             # pyexr.write(r"H:\Falcor\debug/emission_vis_{}.exr".format(b),emission_vis[0,...].permute(1,2,0).cpu().numpy())
             # pyexr.write(r"H:\Falcor\debug/gt_vis_{}.exr".format(b),train_data["AccumulatePassoutput"][0,...].cpu().numpy())
             feature_list.append(feature.permute(0,2,3,1))
+        
         reflect_cone = torch.cat([train_data["position"],train_data["reflect"],train_data["roughness"],train_data["hitdepth"]],dim=-1)
+        reflect_position = train_data["position"] + train_data["reflect"] * train_data["hitdepth"]
         for b in range(3):
-            reflect_cone = torch.cat([reflect_cone,train_data["idirection{}".format(b)][...,:3],train_data["idepth{}".format(b)][...,:2]],dim=-1)
+            view_depth = ((reflect_position - impostor.cPosition[viewidx[0,b].long()].view(1,1,1,3)) * impostor.cForward[viewidx[0,b].long()].view(1,1,1,3)).sum(dim=-1,keepdim=True)
+            normalize_depth = (train_data["idepth{}".format(b)][...,0:2] - view_depth) / (train_data["idepth{}".format(b)][...,2:3] + 1e-2)
+            #reflect_cone = torch.cat([reflect_cone,train_data["idirection{}".format(b)][...,:3],train_data["idepth{}".format(b)][...,:2]],dim=-1)
+            reflect_cone = torch.cat([reflect_cone,train_data["idirection{}".format(b)][...,:3],normalize_depth],dim=-1)
+            # pyexr.write(r"H:\Falcor\debug/normalize_depth_{}.exr".format(b),normalize_depth[0,...].cpu().numpy())
+            # pyexr.write(r"H:\Falcor\debug/train_data_{}.exr".format(b),train_data["idepth{}".format(b)][0,...].cpu().numpy())
+            # pyexr.write(r"H:\Falcor\debug/view_depth_{}.exr".format(b),view_depth[0,...].cpu().numpy())
         #continue
         weights = mlp_weight(reflect_cone)
         feature = torch.cat(feature_list,dim=0)
