@@ -57,6 +57,9 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID)
     gDir0[pixel] = float4(0);
     gDir1[pixel] = float4(0);
     gDir2[pixel] = float4(0);
+    gAlbedo0[pixel] = float4(0);
+    gAlbedo1[pixel] = float4(0);
+    gAlbedo2[pixel] = float4(0);
     float miDepth = 1000;
     if (any(gPrePosition[pixel].xyz != float3(0, 0, 0)) || any(gPreDirection[pixel].xyz != float3(0, 0, 0))) {
         float4 result4 = gVBufferRT.sampleImpostorSingleViewLevel( pixel, gVBufferRT.gImpostor, gPreDirection[pixel].xyz, gPrePosition[pixel].xyz, 0, depth_tanh );

@@ -101,10 +101,11 @@ def _build_orthonormal_basis(n: torch.Tensor) -> tuple[torch.Tensor, torch.Tenso
     b = torch.cross(n, t, dim=-1)
     return t, b, n
 
-def ggx_theta99_from_roughness(
+def ggx_theta_from_roughness(
     roughness: torch.Tensor,
     alpha_is_roughness_sq: bool = True,
-    degrees: bool = True
+    degrees: bool = True,
+    energy_clamp: float = 99
 ) -> torch.Tensor:
     """
     roughness: (...,) tensor in [0,1]
@@ -112,7 +113,7 @@ def ggx_theta99_from_roughness(
     """
     r = roughness
     alpha = r * r if alpha_is_roughness_sq else r  # alpha = roughness^2 (common) or alpha=roughness
-    theta = torch.atan(alpha * torch.sqrt(torch.tensor(99.0, device=r.device, dtype=r.dtype)))  # radians
+    theta = torch.atan(alpha * torch.sqrt(torch.tensor(energy_clamp, device=r.device, dtype=r.dtype)))  # radians
     if degrees:
         theta = theta * (180.0 / torch.pi)
     return theta
@@ -497,7 +498,14 @@ def mean_downsample_pool(x, b):
     
     # back to (B, H//b, W//b, 1)
     return x.permute(0, 2, 3, 1)
-
+import zstandard as zstd
+import pickle
+def load_zst(path):
+    with open(path, "rb") as f:
+        compressed_data = f.read()
+    decompressed_data = zstd.decompress(compressed_data)
+    sample = pickle.loads(decompressed_data)
+    return sample
 def save_checkpoint(
     path,
     epoch,
@@ -547,6 +555,72 @@ def load_checkpoint(
 
     print(f"[Checkpoint] Loaded from {path} (epoch={epoch}, step={global_step})")
     return epoch, global_step
+
+
+def trilinear_mipmap_sample(textures, ranges):
+    """
+    textures: list of tensors, each (B, C, H_l, W_l)
+    ranges:   (B, H, W, 4)  -> u_start, u_end, v_start, v_end
+    return:   (B, C, H, W)
+    """
+    device = ranges.device
+    B, H, W, _ = ranges.shape
+    base_res = textures[0].shape[-1]
+    max_level = len(textures) - 1
+
+    # ---- 1. compute footprint & LOD ----
+    u0, u1, v0, v1 = ranges.unbind(-1)
+    du = (u1 - u0).clamp(min=1e-8)
+
+    footprint = du * base_res
+    lod = torch.log(footprint) / torch.log(torch.tensor(4.0))
+
+    lod = lod.clamp(0, max_level - 1e-6)
+
+    l0 = torch.floor(lod).long()
+    l1 = (l0 + 1).clamp(max=max_level)
+    w  = (lod - l0.float()).unsqueeze(1)  # (B,1,H,W)
+
+    # ---- 2. sampling center ----
+    u = 0.5 * (u0 + u1)
+    v = 0.5 * (v0 + v1)
+
+    # grid_sample uses [-1,1]
+    grid = torch.stack([
+        u * 2 - 1,
+        v * 2 - 1
+    ], dim=-1)  # (B,H,W,2)
+
+    # ---- 3. sample per level ----
+    def sample_level(tex, grid):
+        return F.grid_sample(
+            tex, grid,
+            mode="bilinear",
+            padding_mode="border",
+            align_corners=False
+        )
+
+    out0 = torch.zeros(
+        (B, textures[0].shape[1], H, W),
+        device=device
+    )
+    out1 = torch.zeros_like(out0)
+
+    for level in range(len(textures)):
+        mask0 = (l0 == level).unsqueeze(1)
+        mask1 = (l1 == level).unsqueeze(1)
+
+        if mask0.any():
+            s = sample_level(textures[level], grid)
+            out0 = torch.where(mask0, s, out0)
+
+        if mask1.any():
+            s = sample_level(textures[level], grid)
+            out1 = torch.where(mask1, s, out1)
+
+    # ---- 4. trilinear blend ----
+    out = (1 - w) * out0 + w * out1
+    return out
 if __name__ == "__main__":
     img0 = (np.random.rand(512, 512, 3) * 255).astype(np.uint8)
     img1 = (np.random.rand(512, 512, 3) * 255).astype(np.uint8)

@@ -81,7 +81,7 @@ def worker_process(worker_id, resolution, scene_path,
         height=resolution,
         create_window=False,
         device=device,
-        spp=4
+        spp=256
     )
     render_graph_MinimalPathTracer(testbed)
     testbed.load_scene(scene_path)
@@ -163,10 +163,10 @@ def save_compressed_pickle(data, file_path):
         f.write(compressed_data)
 
 
-object_data_list = ["color","position","albedo","specular","normal","roughness","depth","AccumulatePassoutput","emission","view","raypos"]
+object_data_list = ["color","position","albedo","specular","normal","roughness","depth","emission","AccumulatePassoutput","view","raypos"]
 object_key_dict = {name: i for i, name in enumerate(object_data_list)}
-#sellect_list = ["color","position","albedo","specular","normal","roughness","depth","AccumulatePassoutput","emission","view","raypos"]
-sellect_list = ["depth"]
+sellect_list = ["color","position","albedo","specular","normal","roughness","depth","emission","AccumulatePassoutput","view","raypos"]
+#sellect_list = ["depth"]
 #object_data_list = ["color","position","albedo","specular","normal","roughness","depth","AccumulatePassoutput"]
 def pack_object_data(path,camera_resolution,direction_resolution):
     data = {}
@@ -229,20 +229,22 @@ def main():
     # pyexr.write("./lookup.exr",lookup_loaded)
 
     finest_resolution = 512
-    scene_name = "dragon"
-    folder_path = r"H:\Falcor\scenes/" 
-    output_folder =  r"H:\Falcor\datasets/" + scene_name + "2/"
+    
+    folder_path = r"H:\Falcor\scenes/impostor/" 
+    
     resolution_list = [1024,512,182,64,24,8]
     file_list = os.listdir(folder_path)
     for file in file_list: 
         if file.split(".")[-1] != "pyscene":
             continue
-        if file!="dragon.pyscene":
+        if file!="flame.pyscene":
             continue
         # if (file.split(".")[0] + "level3") in file_list:
         #     continue
-        scene_path = folder_path + file
         
+        scene_name = file.split(".")[0]
+        scene_path = folder_path + file
+        output_folder =  r"H:\Falcor\datasets/impostor/" + scene_name + "/"
 
         os.makedirs(output_folder, exist_ok=True)
         # Create device and setup renderer.

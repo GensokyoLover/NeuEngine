@@ -122,9 +122,8 @@ class ImpostorTrainingDataset(Dataset):
         # self.training_keys = ["AccumulatePassoutput","albedo","depth","specular","normal","position","roughness","view","raypos","emission"]
 
         self.device = device
-        self.root_dir = os.path.join(root_dir, "buckets_1")
         init_file_list = os.listdir(self.root_dir)
-        self.roughness_floor = 1
+        self.roughness_floor = 0
         self.file_dict = {}
         for file in init_file_list:
             _,_,_,_,roughness,_ = file.split("_")
@@ -156,7 +155,7 @@ class ImpostorTrainingDataset(Dataset):
         
 
         for key in sample:
-            sample[key] = sample[key].reshape(256, 256, *sample[key].shape[1:])
+            sample[key] = sample[key].reshape(64, 64, *sample[key].shape[1:])
 
         return sample,scene_id
     

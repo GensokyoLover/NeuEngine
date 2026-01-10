@@ -101,6 +101,9 @@ def render_graph_MinimalPathTracer(testbed):
     g.markOutput("VBufferRT2.direction0")
     g.markOutput("VBufferRT2.direction1")
     g.markOutput("VBufferRT2.direction2")
+    g.markOutput("VBufferRT2.uv0")
+    g.markOutput("VBufferRT2.uv1")
+    g.markOutput("VBufferRT2.uv2")
     testbed.render_graph = g
 def render_graph_MinimalPathTracer_Debug(testbed):
     g = testbed.create_render_graph("MinimalPathTracer")
@@ -161,10 +164,10 @@ def save_compressed_pickle(data, file_path):
         f.write(compressed_data)
 
 
-object_data_list = ["color","position","albedo","specular","normal","roughness","depth","emission","AccumulatePassoutput","view","raypos","mind","reflect","idepth0","idepth1","idepth2","idirection0","idirection1","idirection2"]
+object_data_list = ["color","position","albedo","specular","normal","roughness","depth","emission","AccumulatePassoutput","view","raypos","mind","reflect","idepth0","idepth1","idepth2","idirection0","idirection1","idirection2","uv0","uv1","uv2"]
 #object_data_list = ["idepth0","idepth1","idepth2","idirection0","idirection1","idirection2"]
 object_key_dict = {name: i for i, name in enumerate(object_data_list)}
-sellect_list = ["albedo","specular","normal","position","view","AccumulatePassoutput","roughness","raypos","depth","emission","mind","reflect","idepth0","idepth1","idepth2","idirection0","idirection1","idirection2"]
+sellect_list = ["albedo","specular","normal","position","view","AccumulatePassoutput","roughness","raypos","depth","emission","mind","reflect","idepth0","idepth1","idepth2","idirection0","idirection1","idirection2","uv0","uv1","uv2"]
 #sellect_list = ["albedo","specular","normal","position","view","AccumulatePassoutput","roughness","raypos","depth","emission","mind","reflect"]
 #sellect_list = ["idepth0","idepth1","idepth2","idirection0","idirection1","idirection2"]
 #object_data_list = ["color","position","albedo","specular","normal","roughness","depth","AccumulatePassoutput"]
@@ -502,21 +505,24 @@ def render(resolution,testbed,scene_path,output_path,object_data_dict,sellect_li
             
 def main():
     label ="test"
-    scene_path = r'H:\Falcor\scenes\dragon_ref.pyscene'
+    scene_name = "flame"
+    scene = r"{}_ref.pyscene".format(scene_name)
+    scene_path = r'H:\Falcor\scenes/' + scene
+    datasets_path = r"H:\Falcor\datasets\renderdata/" + scene_name + "/"
     resolution = 512
-    scale_path = scene_path.replace('.pyscene','') + "_{}/".format(resolution)
-    output_path = scene_path.replace('.pyscene','') + "{}/".format(label)
-    if os.path.exists(output_path) == False:
-        os.makedirs(output_path)
+
+
+    if os.path.exists(datasets_path) == False:
+        os.makedirs(datasets_path)
 
     # Create device and setup renderer.
     start_render_farm(
         resolution=512,
         scene_path=scene_path,
-        output_path=output_path,
+        output_path=datasets_path,
         object_data_dict=object_key_dict,
         select_list=sellect_list,
-        num_workers=1,
+        num_workers=4,
         num_frames=500
     )
 

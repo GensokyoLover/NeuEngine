@@ -1,339 +1,463 @@
-import torch
-import torch.nn as nn
-import numpy
-import os
-import json
-import pyexr
 from impostor import *
 import cv2
-import zstandard as zstd
-import pickle
-from torch.utils.tensorboard import SummaryWriter
-def pack_emission_data(path,output_path):
-    data = None
-    for i in range(100000):
-        file_name = "emission_{:05d}.exr".format(i)
-        if os.path.exists(path + file_name):
-            img = pyexr.read(path + file_name)
-            img = img.astype(numpy.float32)
-            ## downsample
-            #img_down = cv2.resize(img, (64, 64), interpolation=cv2.INTER_AREA)
-            if i == 0:
-                data = img[numpy.newaxis,...]
-            else:
-                data = numpy.concatenate([data,img[numpy.newaxis,...]],axis=0)
-    data = data[...,:3]
-    compressed = zstd.ZstdCompressor(level=10).compress(
-        pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
+import numpy as np
+from dataset import *
+from utils import *
+import os
+from network import *
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+def show_image(title, img):
+    img = img.cpu().numpy()
+    img = np.clip(img, 0, 1)
+    img = (img * 255).astype(np.uint8)
+    cv2.imshow(title, img)
+    cv2.waitKey(1)
+
+def rotate_vector(v, axis, angle):
+    # v, axis: (3,)
+    # angle: radians
+    axis = axis / torch.norm(axis)
+    v = v / torch.norm(v)
+    cos = torch.cos(angle)
+    sin = torch.sin(angle)
+    return v * cos + torch.cross(axis, v) * sin + axis * torch.dot(axis, v) * (1 - cos)
+
+def upscale_to_1024(img_tensor):
+    # img_tensor shape: (H, W, 3)
+    img = img_tensor.permute(2,0,1).unsqueeze(0)  # → (1,3,H,W)
+
+    img_up = torch.nn.functional.interpolate(
+        img, 
+        size=(1024,1024),
+        mode="bilinear",
+        align_corners=False
     )
 
-    with open(output_path, "wb") as f:
-        f.write(compressed)
-
-    print(f"✅ Saved compressed file: {output_path}, size={len(compressed)/1024/1024:.2f} MB")
-
-def load_emission_data(path="emission_data.zst"):
-    with open(path, "rb") as f:
-        compressed = f.read()
-
-    decompressed = zstd.ZstdDecompressor().decompress(compressed)
-    data = pickle.loads(decompressed)
-    return data
-
-def load_impostor_data(path):
-    data = {}
-    with open(path + "position.json","r") as file:
-        position_data = json.load(file)
-    data["position"] = torch.tensor(numpy.array(position_data)).float().cuda()
-    data["position"] = data["position"] / data["position"].norm(dim=-1,keepdim=True)
-    with open(path + "faces.json","r") as file:
-        face_data = json.load(file)
-    data["face"] = torch.tensor(numpy.array(face_data)).int().cuda()
-    image_path = path + r"emission_16.zst"
-    if os.path.exists(image_path):
-        data["emission"] = torch.tensor(load_emission_data(image_path)).cuda()
-    else:
-        pack_emission_data(path,image_path)
-        data["emission"] = torch.tensor(load_emission_data(image_path)).cuda()
-    return data
+    img_up = img_up.squeeze(0).permute(1,2,0)  # back to (1024,1024,3)
+    return img_up
 
 
-
-class LatentDecoder(nn.Module):
-    def __init__(self, latent_dim=256, base_channels=256):
-        super().__init__()
-
-        # 1. 通过全连接把 latent 换成 CNN 的起始块
-        self.fc = nn.Linear(latent_dim, base_channels * 4 * 4)
-
-        # 2. 逐层上采样 (transposed conv)
-        self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(base_channels, base_channels//2, 4, stride=2, padding=1),  # 4→8
-            nn.ReLU(True),
-
-            nn.ConvTranspose2d(base_channels//2, base_channels//4, 4, stride=2, padding=1),  # 8→16
-            nn.ReLU(True),
-
-            nn.ConvTranspose2d(base_channels//4, base_channels//8, 4, stride=2, padding=1),  # 16→32
-            nn.ReLU(True),
-
-            nn.ConvTranspose2d(base_channels//8, base_channels//16, 4, stride=2, padding=1),  # 32→64
-            nn.ReLU(True),
-
-            nn.Conv2d(base_channels//16, 3, 3, padding=1),  # 输出 RGB
-            nn.LeakyReLU(0.1)   # 若数据是 [0,1] 范围
-        )
-
-    def forward(self, z):
-        B = z.shape[0]
-        x = self.fc(z).view(B, -1, 4, 4)  # [B, C, 4, 4]
-        img = self.decoder(x)             # [B, 3, 64, 64]
-        return img
+def generate_rays(W, H, camera_pos, forward, up=torch.tensor([0,1,0], dtype=torch.float32),
+                  fov=60, ortho=False, device="cuda",scale=1):
+    """
+    生成世界坐标射线（rayPosW, rayDirW）
     
-class ResBlock(nn.Module):
-    def __init__(self, channels):
-        super().__init__()
-        self.block = nn.Sequential(
-            nn.Conv2d(channels, channels, kernel_size=3, padding=1),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Conv2d(channels, channels, kernel_size=3, padding=1),
-        )
-        self.act = nn.LeakyReLU(0.2, inplace=True)
+    W,H: 分辨率
+    camera_pos: (3,)
+    forward: (3,)
+    up: (3,)
+    fov: 仅对透视投影视用
+    ortho: 是否使用正交投影
+    """
 
-    def forward(self, x):
-        return self.act(x + self.block(x))
+    camera_pos = camera_pos.to(device)
+    forward = F.normalize(forward.to(device), dim=0)
+    up = F.normalize(up.to(device), dim=0)
+
+    # 建立右方向
+    right = F.normalize(torch.cross(forward, up), dim=0)
+    up = F.normalize(torch.cross(right, forward), dim=0)
+
+    # 归一化屏幕坐标
+    i = torch.linspace(-1, 1, W, device=device)
+    j = torch.linspace(-1, 1, H, device=device)
+    px, py = torch.meshgrid(i, -j, indexing="xy")  # y 反转以与图像一致
+
+    if ortho:
+        # ------------------------
+        #      正交投影
+        # ------------------------
+        ray_dir = forward.view(1,1,3).expand(H,W,3)
+
+        # 计算屏幕平面上的偏移
+        scale = 1  # orthographic size，可改成参数
+        offset = (px.unsqueeze(-1) * right + py.unsqueeze(-1) * up) * scale
+
+        ray_pos = camera_pos.view(1,1,3) + offset
+
+    else:
+        # ------------------------
+        #      透视投影
+        # ------------------------
+        fov_rad = (fov / 180.0) * 3.1415926
+        z = 1 / torch.tan(fov_rad * 0.5)
+
+        # 构造 NDC 的方向
+        ndc = torch.stack((px, py, torch.full_like(px, -z)), dim=-1)
+
+        # 旋转到世界坐标
+        cam_mat = torch.stack([right, up, -forward], dim=1)   # 3x3
+        ray_dir = torch.matmul(ndc.reshape(-1,3), cam_mat.T)
+        ray_dir = F.normalize(ray_dir, dim=-1).reshape(H,W,3)
+
+        # 所有透视射线起点相同
+        ray_pos = camera_pos.view(1,1,3).expand(H,W,3)
+
+    return ray_pos, ray_dir
 
 
-# ----------------------------------------------------------
-# 解码器： latent → 16×16 image
-# ----------------------------------------------------------
-class LatentDecoder16(nn.Module):
-    def __init__(self, latent_dim=256, base_channels=512):
-        super().__init__()
 
-        # latent → 初始 4×4 feature map
-        self.fc = nn.Linear(latent_dim, base_channels * 4 * 4)
+    # 读取 depth.exr
+# env CUDA_LAUNCH_BLOCKING=1n
+training_datasets_list = ["AccumulatePassoutput","albedo","depth","specular","normal","position","roughness","view","raypos","emission"]
+def read_training_datasets(idx):
+    file_path = r"H:\Falcor\media\inv_rendering_scenes\bunny_ref_512_scale\{}/".format(idx)
+    dt = {}
+    for key in training_datasets_list:
+        # 
+        data = pyexr.read(file_path + key + "_{:05d}.exr".format(idx))[...,:buffer_channel[key]]
+        dt[key] = torch.Tensor(data).cuda()
+    with open(file_path + "node.json","r") as file:
+        node = json.load(file)
+    dt["node"] = node
+    return dt
+def sellect_data(texDict,idx,key_list):
+    result = []
+    for key in key_list:
+        result.append(texDict[key][idx,:,:,:])
+    return torch.cat(result,dim=-1)
 
-        # 4×4 → 8×8
-        self.up1 = nn.Sequential(
-            nn.ConvTranspose2d(base_channels, base_channels // 2,
-                               kernel_size=4, stride=2, padding=1),
-            nn.LeakyReLU(0.2, inplace=True),
-            ResBlock(base_channels // 2),
-        )
-
-        # 8×8 → 16×16
-        self.up2 = nn.Sequential(
-            nn.ConvTranspose2d(base_channels // 2, base_channels // 4,
-                               kernel_size=4, stride=2, padding=1),
-            nn.LeakyReLU(0.2, inplace=True),
-            ResBlock(base_channels // 4),
-        )
-
-        # 输出层：卷到 3 通道
-        self.final = nn.Sequential(
-            nn.Conv2d(base_channels // 4, base_channels // 8, 3, padding=1),
-            nn.LeakyReLU(0.2, inplace=True),
-            ResBlock(base_channels // 8),
-            nn.Conv2d(base_channels // 8, 3, kernel_size=1),  # 最终 RGB
-        )
-
-    def forward(self, z):
-        B = z.shape[0]
-
-        # MLP 部分
-        x = self.fc(z).view(B, -1, 4, 4)
-
-        # CNN + 上采样
-        x = self.up1(x)   # 8×8
-        x = self.up2(x)   # 16×16
-        x = self.final(x)
-
-        return x  # [B, 3, 16,16]
-
+def sellect_gbuffer_data(texDict,key_list):
+    result = []
+    for key in key_list:
+        result.append(texDict[key])
+    return torch.cat(result,dim=-1)
+from tqdm import tqdm
+from torch.utils.tensorboard import SummaryWriter
 import math
-def pack_to_atlas(data, tile_h=64, tile_w=64):
-    """
-    data: (N, tile_h, tile_w, 3) 的 numpy 数组
-    返回: 一张拼好的大图 big_img (H_big, W_big, 3)
-    """
-    assert data.ndim == 4 and data.shape[1] == tile_h and data.shape[2] == tile_w and data.shape[3] == 3
-    N = data.shape[0]
+## dataloader
+from torch.utils.data import DataLoader
+impostor = load_impostor("Light",1)
 
-    # 尽量接近正方形的布局
-    cols = int(math.ceil(math.sqrt(N)))
-    rows = int(math.ceil(N / cols))
+camera_pos = impostor.cPosition[0].clone().float().cuda()
+forward    = impostor.cForward[0].clone().float().cuda()
+up         = torch.tensor([0,1,0], dtype=torch.float32).cuda()
 
-    H_big = rows * tile_h
-    W_big = cols * tile_w
+W, H = 256, 256
 
-    big_img = np.zeros((H_big, W_big, 3), dtype=data.dtype)
+move_speed = 0.02
+rot_speed = 3 * math.pi / 180   # 3 degrees
 
-    for idx in range(N):
-        r = idx // cols
-        c = idx % cols
-        y0, y1 = r * tile_h, (r + 1) * tile_h
-        x0, x1 = c * tile_w, (c + 1) * tile_w
-        big_img[y0:y1, x0:x1, :] = data[idx]
-
-    return big_img
+i = 0
 
 
-class LatentSpaceInterpolator(nn.Module):
-    def __init__(self, source_impostor_data, target_impostor_data, precomputed):
-        super().__init__()
-        self.source_impostor_data = source_impostor_data
-        self.target_impostor_data = target_impostor_data
-        self.precomputed = precomputed
-        V = source_impostor_data[0]["position"].shape[0]
-        self.sphere_latent_feature = nn.Parameter(
-            0.01 * torch.randn(2,V, 256),
-            requires_grad=True
-        )
+# dataset_process(r"H:\Falcor\datasets\renderdata\dragon_reftest/",impostor,test=False)
+# exit()
+#ckpt_path = r"H:\Falcor\ckpt\cylinder_encoding_lr_nearestgg3e-4_continue/step_00000090.pt" 
+ckpt_path =False
+start_epoch = 0
+roughness = torch.round(torch.arange(0.0, 1.0 + 1e-9, 0.01) * 100) / 100
+theta95_deg = ggx_theta_from_roughness(roughness, alpha_is_roughness_sq=True, degrees=True,energy_clamp=75).cuda()
+# dataset_process(r"H:/Falcor/media/inv_rendering_scenes/bunny_ref_nobunny_roughnesscorrect/",impostor)
+# exit()
+impostor =load_zst(r"H:\Falcor\datasets\impostor\dragon\level1/impostor.pkl.zst")
+label = "roughness_9"
+log_dir = "./runs/{}".format(label)
+ensure_dir(log_dir)
+writer = SummaryWriter(log_dir=log_dir)
 
-        self.decoder = LatentDecoder16()
-        self.radius = torch.Tensor([1/8,1])
-    def forward(self,i,scale):
-        # d=[B,3], verts=[N,3], faces=[M,3]
-        info = self.precomputed[scale]
+debug_dir = "./output/{}".format(label)
+ensure_dir(debug_dir)
+ckpt_save_path = "./ckpt/{}".format(label)
+ensure_dir(ckpt_save_path)
+global_step = 0
+training_data = ImpostorTrainingDataset(r"H:/Falcor/datasets/renderdata/dragon/train")
+#test_data = ImpostorTrainingTestDataset(r"H:/Falcor/media/inv_rendering_scenes/bunny_ref_nobunny9_25/")
+training_data_loader = DataLoader(training_data, batch_size=1, shuffle=True)
+#test_data_loader = DataLoader(test_data, batch_size=1, shuffle=False)
+emissive_encoder = MultiScaleImageEncoder(3,128).cuda()
+geo_encoder = MultiScaleImageEncoder(6,128).cuda()
+image_decoder = ImageDecoder(10 + 128,256).cuda()
+image_decoder2 = ImageDecoder(10,256).cuda()
+mlp_weight = MLP15to3Softmax().cuda()
 
-        tri_l = info["tri_lower"]
-        tri_u = info["tri_upper"]
-        bary_l = info["bary_lower"]
-        bary_u = info["bary_upper"]
-        t = info["scale_factor"]
 
-        latent = self.sphere_latent_feature  # [2, N, 256]
+if ckpt_path != False:
+    start_epoch, global_step = load_checkpoint(
+        ckpt_path,
+        emissive_encoder,
+        geo_encoder,
+        image_decoder,
+        image_decoder2,
+        mlp_weight,
+        optimizer=None
+    )
+params = []
+params += list(emissive_encoder.parameters())
+params += list(geo_encoder.parameters())
+params += list(image_decoder.parameters())
+params += list(image_decoder2.parameters())
+params += list(mlp_weight.parameters())
 
-        # lower
-        la = latent[0][tri_l[:,0]]
-        lb = latent[0][tri_l[:,1]]
-        lc = latent[0][tri_l[:,2]]
-        f_l = la * bary_l[:,0:1] + lb * bary_l[:,1:2] + lc * bary_l[:,2:3]
+optimizer = torch.optim.AdamW(
+    params,
+    lr=3e-4,
+    betas=(0.9, 0.999),
+    weight_decay=1e-4,
+)
+# view_combine = PixelMultiheadAttention(128).cuda()
 
-        # upper
-        la = latent[1][tri_u[:,0]]
-        lb = latent[1][tri_u[:,1]]
-        lc = latent[1][tri_u[:,2]]
-        f_u = la * bary_u[:,0:1] + lb * bary_u[:,1:2] + lc * bary_u[:,2:3]
+criterion = torch.nn.L1Loss()   
+num_epochs = 1000
 
-        # radius-interpolation
-        f = f_l * (1-t) + f_u * t    # [B,256]
+
+# roughness: 0.00, 0.01, ..., 1.00
+
+
+# 打印 CSV（roughness,theta95_deg）
+# for r, th in zip(roughness, theta95_deg):
+#     print(f"{r:.2f},{th:.6f}")
+sample_key = r"reference_uvi2"
+for epoch in range(num_epochs):
+    print(f"===== Epoch {epoch+1}/{num_epochs} =====")
+
+    # tqdm: 直接包住 dataloader 最方便（不需要你手动 iter/next）
+    pbar = tqdm(training_data_loader, total=len(training_data_loader), desc=f"Epoch {epoch+1}", dynamic_ncols=True)
+    total_loss = 0.0
+    for i, (train_data, scene_id) in enumerate(pbar):
+        train_data = tocuda(train_data)
+        scale = 1.0/ impostor.cRadius[0]
+        viewidx = train_data["sampleView"][:, 0, 0, :]
+        train_data["position"] = train_data["position"] * scale
+        depthDownList = []
+        positionDownList = []
+        emissionDownList = [[],[],[]]
+        for b in range(viewidx.shape[0]):
+            emission = sellect_data(impostor.texDict, viewidx[b].long(), ["emission"])
+            depth = sellect_data(impostor.texDict, viewidx[b].long(), ["depth"])
+            direction = sellect_data(impostor.texDict, viewidx[b].long(), ["view"])
+            origin = sellect_data(impostor.texDict, viewidx[b].long(), ["raypos"])
+            normal = sellect_data(impostor.texDict, viewidx[b].long(), ["normal"])
+            centor = origin - direction * depth
+        depthDownList.append(depth)
+        positionDownList.append(origin)
+        for b in range(3):
+            emissionDownList[b].append(emission[b:b+1,...].permute(0,3,1,2))
+            for level in range(4):
+                depthDownList.append(min_downsample_pool(depth, 4**(level+1)))
+                positionDownList.append(mean_downsample_pool(origin, 4**(level+1)))
+                emissionDownList[b].append(mean_downsample_pool(emission[b:b+1,...], 4**(level+1)).permute(0,3,1,2))
+            
+        gbuffer_input = sellect_gbuffer_data(train_data, ["position", "normal", "roughness", "view"])
+    
+        for b in range(3):
+            emission_feature = emissive_encoder(emission[b:b+1,...])
+            feature = trilinear_mipmap_sample(emission_feature,train_data["uv{}".format(i)])
+            emission_vis = trilinear_mipmap_sample(emissionDownList[b],train_data["uv{}".format(i)])
+            pyexr.write(r"H:\Falcor\debug/emission_vis_{}.exr".format(b),emission_vis[0,...].permute(1,2,0).cpu().numpy())
+            pyexr.write(r"H:\Falcor\debug/gt_vis_{}.exr".format(b),train_data["AccumulatePassoutput"][0,...].cpu().numpy())
+
        
-        out_image = self.decoder(f).permute(0,2,3,1)
-        gt_image = self.target_impostor_data[scale]["emission"]
-        loss = torch.abs(out_image - gt_image).mean()
-        _,w,h,_ = gt_image.shape
-        #print(w,h)
-        if i %300 == 0:
-            if i == 0:
-                gt_image_big = pack_to_atlas(gt_image.detach().cpu().numpy(),w,h)
-                pyexr.write("output/gt_impostor__{}_{:05d}.exr".format(scale,i//100), gt_image_big)
-                gt_source_image_big = pack_to_atlas(self.source_impostor_data[scale]["emission"].detach().cpu().numpy(),w,h)
-                pyexr.write("output/gt_source_impostor__{}_{:05d}.exr".format(scale,i//100), gt_source_image_big)
-            out_image_big = pack_to_atlas(out_image.detach().cpu().numpy(),w,h)
-            pyexr.write("output/pred_impostor__{}_{:05d}.exr".format(scale,i//100), out_image_big)
-        return loss
-import time
+        referCylinderAxis = F.grid_sample(-direction.permute(0, 3, 1, 2), reflect_uvi, mode="nearest", align_corners=False,padding_mode="border")
+        firstHit = F.grid_sample(depthDownList[1].permute(0, 3, 1, 2), reflect_uvi, mode="nearest", align_corners=False,padding_mode="border")
+        referOrigin = F.grid_sample(positionDownList[0].permute(0, 3, 1, 2), reflect_uvi, mode="nearest", align_corners=False,padding_mode="border")
+        referCylinderRadius = (torch.zeros_like(firstHit) + 16/512).permute(0,2,3,1)
+        referCylinderLenth = referCylinderRadius * 2
+        referCylinderCentor = (firstHit + referCylinderRadius.permute(0,3,1,2)) * referCylinderAxis + referOrigin
+        referCylinderLenth = referCylinderLenth
+        referCylinderCentor = referCylinderCentor.permute(0,2,3,1) 
+        referCylinderAxis = referCylinderAxis.permute(0,2,3,1)
+        singleCentor = referCylinderCentor[0,:,:,:].permute(1,2,0)
+        singleCentor1 = referCylinderCentor[1,:,:,:].permute(1,2,0)
+        singleCentor2 = referCylinderCentor[2,:,:,:].permute(1,2,0)
+        targetCylinderAxis = train_data["reflectDirL"]
+        targetConeAngle = theta95_deg[(torch.where(train_data["roughness"] * 100<2,2,train_data["roughness"] * 100)).int()]
+        targetCylinderRadius = cone_radius_deg(train_data["mind"],targetConeAngle)
+        targetCylinderLenth = targetCylinderRadius * 2
+        targetCylinderCentor = train_data["referencePosL2"]
+        value = relative_cylinder_encoding_with_axis(referCylinderCentor,referCylinderAxis,referCylinderRadius[...,0],referCylinderLenth[...,0],targetCylinderCentor,targetCylinderAxis,targetCylinderRadius[...,0],targetCylinderLenth[...,0])
+        #print(train_data["roughness"].mean())
+        # gbuffer_to_centor = reflect_centor.permute(0, 2, 3, 1) - train_data["refelctPosL"]
+        # angle = angle_between_tensors_atan2(gbuffer_to_centor, train_data["reflectDirL"], dim=-1, degrees=True) / 0.1
+        # reflect_lenth = gbuffer_to_centor.norm(dim=-1, keepdim=True)
+        # mini, _ = reflect_lenth.min(dim=0, keepdim=True)
+        # reflect_lenth = reflect_lenth - mini                               
+        # reflect_input = torch.zeros_like(emission)
+        # reflect_input = reflect_input.permute(1, 2, 0, 3).reshape(1, 256, 256, 15)
+        # for i in range(3):
+        #     pyexr.write("./reflect_emission{}.exr",emission_vis[i].permute(1,2,0).reshape(H,W,3).cpu().numpy())
+        # pyexr.write("./gt.exr",train_data["AccumulatePassoutput"].reshape(H,W,3).cpu().numpy())
+        reflect_input =value.permute(1,2,0,3).reshape(1,256,256,15)
+        weight = mlp_weight(reflect_input)  # 期望 (1,256,256,3) or 等价
 
+        feature = F.grid_sample(
+            emission_feature["I0"],
+            reflect_uvi,
+            mode="nearest",
+            align_corners=True,
+            padding_mode="border"
+        ).permute(0, 2, 3, 1)  # (3,H,W,C) or (V,H,W,C)
 
-def precompute_interpolation_info(target_data, source_verts, source_faces, radius):
-    """
-    target_data: list of dict，每个 scale_level 内含 position[B,3]
-    source_verts: [N,3]
-    source_faces: [M,3]
-    radius: tensor [2] 例如 [1/8, 1]
+        # weight: (1,256,256,3) -> (3,256,256,1) to broadcast with feature
+        # 你原来是 weight.permute(3,1,2,0) => (3,256,256,1)
+        combine_feature = (feature * weight.permute(3, 1, 2, 0)).sum(dim=0, keepdim=True)
 
-    返回：
-    info = {
-        scale: {
-            "tri_lower": [B,3],
-            "bary_lower": [B,3],
-            "tri_upper": [B,3],
-            "bary_upper": [B,3],
-            "scale_factor": [B,1]
-        }
-    }
-    """
-    info = {}
+        decoder_input = torch.cat([combine_feature, gbuffer_input], dim=-1)
+        #decoder_input = torch.cat([combine_feature, gbuffer_input], dim=-1)
+        #output = image_decoder2(gbuffer_input)  # 假设输出 (1,H,W,3)
+        output = image_decoder(decoder_input)  # 假设输出 (1,H,W,3)
 
-    for scale, t in enumerate(target_data):
-        pos = t["position"]                         # [B,3]
+        # -----------------------
+        # loss + backward
+        # -----------------------
+        # gt：你注释里用的是 AccumulatePassoutput，按你实际 gt 对齐
+        gt = train_data["AccumulatePassoutput"].reshape(1, H, W, 3)
 
-        # 1. 找到两个球面的半径
-        r = pos.norm(dim=-1, keepdim=True)          # [B,1]
-        r0, r1 = radius[0], radius[1]
+        # 这里按需改 loss（L1/MSE/LPIPS等）
+        loss = criterion(output, gt)
 
-        # lower / upper sphere 插值权重
-        t = (r - r0) / (r1 - r0)
-        t = t.clamp(0,1)
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        total_loss = total_loss + loss.item()
+        optimizer.step()
 
-        # 把方向投影到 lower sphere / upper sphere
-        dir_l = pos / r * r0
-        dir_u = pos / r * r1
-
-        # 2. 计算 barycentric（改成 batch 版本）
-        tri_l, bary_l = find_containing_triangle_batch(dir_l, source_verts, source_faces)
-        tri_u, bary_u = find_containing_triangle_batch(dir_u, source_verts, source_faces)
-
-        info[scale] = {
-            "tri_lower": tri_l,
-            "bary_lower": bary_l,
-            "tri_upper": tri_u,
-            "bary_upper": bary_u,
-            "scale_factor": t,
-        }
-
-    return info
-
-path = r"H:\Falcor\media\inv_rendering_scenes\light_collection_128_{}/level{}/"
-source_level, target_level = 1,1
-scale = [1,2,3,4,5,6,7,8]
-source_data = []
-target_data = []
-
-for scale_level in scale:
-    source_path = path.format(scale_level,source_level)
-    target_path = path.format(scale_level,target_level)
-    source_data_single = load_impostor_data(source_path)
-    target_data_single = load_impostor_data(target_path)
-    source_data_single["position"] = source_data_single["position"] * (9-scale_level) / 8
-    target_data_single["position"] = target_data_single["position"] * (9-scale_level) / 8 
-    source_data.append(source_data_single)
-    target_data.append(target_data_single)
-
-info = precompute_interpolation_info(target_data, source_data[0]["position"], source_data[0]["face"], torch.Tensor([1/8,1]).cuda())
-model = LatentSpaceInterpolator(source_data, target_data,info).cuda()
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-loss_accum = 0.0
-log_interval = 2400   # 每100 step 记录一次
-writer = SummaryWriter(log_dir="runs/16scale0_source8_target4")
-torch.cuda.synchronize()
-start = time.perf_counter()
-
-cnt = 0
-for i in range(1000000):
-    for scale in [0,1,2,3,4,5,6,7]:
-        optimizer.zero_grad()
-        loss = model(i,scale)       # forward
+        # -----------------------
+        # tensorboard logging
+        # -----------------------
         
-        loss.backward()      # backward
-        optimizer.step()     # optimizer update
-        print(i,scale,loss)
-        cnt = cnt + 1
-        loss_accum = loss_accum+ loss.item()
-        if cnt % log_interval == 0:
-            avg_loss = loss_accum / cnt
-            writer.add_scalar("Loss/train_avg100", avg_loss, i)
-            print(f"[Step {i}] avg_loss={avg_loss:.6f}")
-            loss_accum = 0.0     # reset
-            cnt = 0
-torch.cuda.synchronize()
-end = time.perf_counter()
 
-elapsed = end - start
+        # tqdm postfix
+        pbar.set_postfix(loss=f"{loss.item():.6f}", step=global_step)
+        if (global_step % 10) == 0 and i < 20:
+            save_path = os.path.join(debug_dir, f"step_{global_step:08d}_scene_{i}.exr")
+            save_result_exr(output.detach(), gt.detach(), save_path)
+        #break
+    writer.add_scalar("train/loss", float(total_loss/len(training_data_loader)), global_step)
+    global_step += 1
+    if global_step % 10 == 0:
+        save_checkpoint(
+            ckpt_save_path + f"/step_{global_step:08d}.pt",
+            epoch,
+            global_step,
+            emissive_encoder,
+            geo_encoder,
+            image_decoder,
+            image_decoder2,
+            mlp_weight
+        )
+    continue
+    #continue
+    tpbar = tqdm(test_data_loader, total=len(test_data_loader), desc=f"Epoch {epoch+1}", dynamic_ncols=True)
+    ## test no grad
+    emissive_encoder.eval()
+    mlp_weight.eval()
+    image_decoder.eval()
+    # 2. 禁用梯度（最重要）
+    with torch.no_grad():
+        debug_test_dir = debug_dir + "/test/"
+        ensure_dir(debug_test_dir)
+        for i, (test_data, scene_id) in enumerate(tpbar):
+            if i != 4:
+                continue
+            test_data = tocuda(test_data)
+            emission_feature_list = []
+            for v in range(42):
+                emission_feature = emissive_encoder(impostor.texDict["emission"][v:v+1])
+                torch.cuda.empty_cache()
+                print(torch.cuda.memory_allocated() / 1024**3, "GB allocated")
+                print(torch.cuda.memory_reserved()  / 1024**3, "GB reserved")
+                emission_feature_list.append(emission_feature["I0"])
+            emission_feature = torch.cat(emission_feature_list,dim=0)
+     
+       
+            final_feature = sample_by_uvi_bilinear_align_false(emission_feature.permute(0,2,3,1), test_data[sample_key].reshape(1,512,512,3,3),mode="nearest")
 
-print(f"🟢 1000 次 forward+backward 总耗时：{elapsed:.4f} 秒")
-print(f"🟢 每次 iteration: {elapsed/1000.0:.6f} 秒")
-print(f"🟢 训练 FPS: {1000/elapsed:.2f} iters/sec")
-print(f"最新 loss: {loss.item():.6f}")
+            depth = impostor.texDict["depth"]
+            origin = impostor.texDict["raypos"]
+            depthDownList = []
+            positionDownList = []
+            depthDownList.append(depth)
+            positionDownList.append(origin)
+            for level in range(4):
+                depthDownList.append(min_downsample_pool(depth, 4**(level+1)))
+                positionDownList.append(mean_downsample_pool(origin, 4**(level+1)))
+            gbuffer_input = sellect_gbuffer_data(test_data, ["position", "normal", "roughness", "view"])
+            #geo_feature = geo_encoder(geo_input.permute(0, 3, 1, 2)).permute(0, 2, 3, 1)
+            
+
+            # emission_vis = F.grid_sample(emission.permute(0, 3, 1, 2), reflect_uvi, mode="nearest", align_corners=False)
+            emission_vis = sample_by_uvi_bilinear_align_false(impostor.texDict["emission"],test_data[sample_key].reshape(1,512,512,3,3),mode="nearest")
+            referCylinderAxis = sample_by_uvi_bilinear_align_false(-impostor.texDict["view"], test_data[sample_key].reshape(1,512,512,3,3),mode="nearest")
+            firstHit = sample_by_uvi_bilinear_align_false(depthDownList[1], test_data[sample_key].reshape(1,512,512,3,3),mode="nearest")
+            referOrigin = sample_by_uvi_bilinear_align_false(origin, test_data[sample_key].reshape(1,512,512,3,3),mode="nearest")
+            referCylinderRadius = (torch.zeros_like(firstHit) + 16/512)
+            referCylinderLenth = referCylinderRadius * 2
+            referCylinderCentor = (firstHit + referCylinderRadius) * referCylinderAxis + referOrigin
+            referCylinderLenth = referCylinderLenth
+            referCylinderCentor = referCylinderCentor
+            referCylinderAxis = referCylinderAxis
+            singleCentor = referCylinderCentor[0,:,:,:].permute(1,2,0)
+            singleCentor1 = referCylinderCentor[1,:,:,:].permute(1,2,0)
+            singleCentor2 = referCylinderCentor[2,:,:,:].permute(1,2,0)
+            targetCylinderAxis = test_data["reflectDirL"].reshape(1,512,512,-1)
+            targetConeAngle = theta95_deg[(torch.where(test_data["roughness"] * 100<2,2,test_data["roughness"] * 100)).int()]
+            targetCylinderRadius = cone_radius_deg(test_data["mind"],targetConeAngle)
+            targetCylinderLenth = targetCylinderRadius * 2
+            targetCylinderCentor = test_data["referencePosL2"].reshape(1,512,512,-1)
+            value = relative_cylinder_encoding_with_axis(referCylinderCentor,referCylinderAxis,referCylinderRadius[...,0],referCylinderLenth[...,0],targetCylinderCentor,targetCylinderAxis,targetCylinderRadius[...,0],targetCylinderLenth[...,0])
+            reflect_input =value.permute(1,2,0,3).reshape(1,512,512,15)
+            weight = mlp_weight(reflect_input)  # 期望 (1,256,256,3) or 等价
+
+         
+            combine_feature = (final_feature * weight.permute(3, 1, 2, 0)).sum(dim=0, keepdim=True)
+
+            decoder_input = torch.cat([combine_feature, gbuffer_input], dim=-1)
+            #decoder_input = torch.cat([combine_feature, gbuffer_input], dim=-1)
+            #output = image_decoder2(gbuffer_input)  # 假设输出 (1,H,W,3)
+            output = image_decoder(decoder_input)  # 假设输出 (1,H,W,3)
+            output_path = os.path.join(debug_test_dir, f"epoch_{global_step+1:04d}_scene_{i}_output.exr")
+            gt_path = os.path.join(debug_test_dir, f"epoch_{global_step+1:04d}_scene_{i}_gt.exr")
+            roughness_path = os.path.join(debug_test_dir, f"epoch_{global_step+1:04d}_scene_{i}_roughness.exr")
+            pyexr.write(gt_path,test_data["AccumulatePassoutput"].reshape(512,512,3).cpu().numpy())
+            pyexr.write(output_path,output.reshape(512,512,3).cpu().numpy())
+            pyexr.write(roughness_path,test_data["roughness"].reshape(512,512,1).cpu().numpy())
+            break
+    emissive_encoder.train()
+    mlp_weight.train()
+    image_decoder.train()
+writer.close()
+# for epoch in range(num_epochs):
+#     print(f"===== Epoch {epoch+1}/{num_epochs} =====")
+#     ## get dataset
+#     data_iter = iter(training_data_loader)
+   
+#     lenth = len(training_data_loader)
+#     for i in range(lenth):   # 遍历所有 datasetsp
+#         train_data,scene_id = next(data_iter)
+#         train_data = tocuda(train_data)
+#         viewidx = train_data["reflect_uvi"][:,0,0,:,2]
+#         for b in range(viewidx.shape[0]):
+#             emission = sellect_data(impostor.texDict,viewidx[b].long(),["emission"])
+#             depth = sellect_data(impostor.texDict,viewidx[b].long(),["depth"])
+#             direction = sellect_data(impostor.texDict,viewidx[b].long(),["view"])
+#             origin = sellect_data(impostor.texDict,viewidx[b].long(),["raypos"])
+#             centor = origin - direction * depth
+        
+#         gbuffer_input = sellect_gbuffer_data(train_data,["position","normal","roughness","view"])
+#         emission_feature = image_encoder(emission.permute(0,3,1,2)).permute(0,2,3,1)
+#         reflect_uvi = train_data["reflect_uvi"][...,:2].permute(0,3,1,2,4).reshape(-1,H,W,2)
+#         #reflect_uvi = reflect_uvi[...,[1,0]]
+#         emission_vis = torch.nn.functional.grid_sample(emission.permute(0,3,1,2),reflect_uvi,mode='bilinear',align_corners=False)
+#         out_dir = torch.nn.functional.grid_sample(-direction.permute(0,3,1,2),reflect_uvi,mode='bilinear',align_corners=False)
+#         reflect_centor = torch.nn.functional.grid_sample(centor.permute(0,3,1,2),reflect_uvi,mode='bilinear',align_corners=False)
+#         gbuffer_to_centor = reflect_centor.permute(0,2,3,1) - train_data["refelctPosL"] 
+#         angle = angle_between_tensors_atan2(gbuffer_to_centor,train_data["reflectDirL"],dim=-1,degrees=True) / 0.1
+#         reflect_lenth = gbuffer_to_centor.norm(dim=-1,keepdim=True) 
+#         mini,_ = reflect_lenth.min(dim=0,keepdim=True)
+#         reflect_lenth = reflect_lenth - mini
+
+#         reflect_input = torch.cat([out_dir.permute(0,2,3,1),angle.unsqueeze(dim=-1),reflect_lenth],dim=-1)
+#         reflect_input = reflect_input.permute(1,2,0,3).reshape(1,256,256,15)
+#         weight = mlp_weight(reflect_input)
+       
+#         # for i in range(3):
+#         #     pyexr.write("H:/Falcor/media/inv_rendering_scenes/object_level_config/Bunny/{}debug_emission{}.exr".format(scene_id,i),emission_vis[i].permute(1,2,0).reshape(H,W,3).cpu().numpy())
+#         #     pyexr.write("H:/Falcor/media/inv_rendering_scenes/object_level_config/Bunny/{}gtemission{}.exr".format(scene_id,i),train_data["AccumulatePassoutput"].reshape(H,W,3).cpu().numpy())
+#         #     pyexr.write("H:/Falcor/media/inv_rendering_scenes/object_level_config/Bunny/{}angle{}.exr".format(scene_id,i),angle[i].reshape(H,W,1).cpu().numpy())
+#         # continue
+#         feature = torch.nn.functional.grid_sample(emission_feature.permute(0,3,1,2),reflect_uvi,mode='bilinear',align_corners=True).permute(0,2,3,1)
+#         combine_feature = (feature * weight.permute(3,1,2,0)).sum(dim=0,keepdim=True)
+#         decoder_input = torch.cat([combine_feature,gbuffer_input],dim=-1)
+#         output = image_decoder(decoder_input)
+
+  

@@ -2054,6 +2054,7 @@ float4 sampleImpostorSingleViewLevel(uint2 pixel, in Impostor impostor, float3 r
             hitSampleLevel[i],
             uint2(512, 512)
         );
+        float uvLenth = hitDepthEnter * depth_tanh * (1.0 / rView) * 0.5;
         float2 textureDepth3;
         textureDepth3 = SmartMinMaxSample( impostor, viewIdx, float2(sampleUV[i].x, sampleUV[i].y), float2(sampleUV[i].z,sampleUV[i].w), float2(512, 512), level);
         float3 normal =
@@ -2079,9 +2080,12 @@ float4 sampleImpostorSingleViewLevel(uint2 pixel, in Impostor impostor, float3 r
         // if (length(hitpos - P_view) < impostor.radius[0] / 128 * 1) {
         //     result = float4(normal, 1);
         // }
+        float2 midUV = float2(sampleUV[i].x + sampleUV[i].y, sampleUV[i].z + sampleUV[i].w) * 0.5;
+        float lenth = max(sampleUV[i].y - sampleUV[i].x, sampleUV[i].w - sampleUV[i].z) / 2;
+        float4 trueUV = float4(uv.x - uvLenth, uv.x + uvLenth, uv.y - uvLenth, uv.y + uvLenth);
 
         if (i == 0 && textureDepth2.x < 9) {
-            gAlbedo0[pixel] = float4(normal, 1);
+            gAlbedo0[pixel] = trueUV;
             gDepth0[pixel] = float4(ConeScale,1);
             gDir0[pixel] = float4(camF, viewIdx);
             result = float4(normal,1);
@@ -2091,7 +2095,7 @@ float4 sampleImpostorSingleViewLevel(uint2 pixel, in Impostor impostor, float3 r
             gDepth0[pixel] = float4(0);
         }
         if (i == 1 && textureDepth2.x < 9) {
-            gAlbedo1[pixel] = float4(normal, 1);
+            gAlbedo1[pixel] = trueUV;
             gDepth1[pixel] = float4(ConeScale, 1);
             gDir1[pixel] = float4(camF, viewIdx);
             result = float4(normal, 1);
@@ -2101,7 +2105,7 @@ float4 sampleImpostorSingleViewLevel(uint2 pixel, in Impostor impostor, float3 r
             gDepth1[pixel] = float4(0);
         }
         if (i == 2 && textureDepth2.x < 9) {
-            gAlbedo2[pixel] = float4(normal, 1);
+            gAlbedo2[pixel] = trueUV;
             gDepth2[pixel] = float4(ConeScale, 1);
             result = float4(normal, 1);
             gDir2[pixel] = float4(camF, viewIdx);

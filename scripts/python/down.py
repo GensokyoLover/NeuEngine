@@ -35,22 +35,26 @@ def downsample_depth_minmax(x, fw, fh):
     return y.permute(0, 3, 2, 1).contiguous()
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DTYPE = torch.float32
-path = r"H:\Falcor\datasets\dragon2\level1"
+path = r"H:\Falcor\datasets\impostor\flame\level1"
 file_list = os.listdir(path)
-# for file in file_list:
-#     dd = int(file)
-#     formatted_dd = "{:05}".format(dd)  # 使用格式化字符串
-#     image_path = path + r"/{}/depth_{}.exr".format(file,formatted_dd)
-#     print(image_path)
-#     data = pyexr.read(image_path)
-#     data_tensor = torch.Tensor(data)
-#     for level in range(10):
-#         down_scale = 1<<level
-#         value = downsample_depth_minmax(data_tensor.unsqueeze(0), down_scale, down_scale).squeeze(0).cpu().numpy()
-#         target_image_path =  path + r"/{}/{}depth.exr".format(file,level)
-#         print(down_scale)
-#         pyexr.write(target_image_path, value)
 for file in file_list:
+    if not file.isdigit():
+        continue
+    dd = int(file)
+    formatted_dd = "{:05}".format(dd)  # 使用格式化字符串
+    image_path = path + r"/{}/depth_{}.exr".format(file,formatted_dd)
+    print(image_path)
+    data = pyexr.read(image_path)
+    data_tensor = torch.Tensor(data)
+    for level in range(10):
+        down_scale = 1<<level
+        value = downsample_depth_minmax(data_tensor.unsqueeze(0), down_scale, down_scale).squeeze(0).cpu().numpy()
+        target_image_path =  path + r"/{}/{}depth.exr".format(file,level)
+        print(down_scale)
+        pyexr.write(target_image_path, value)
+for file in file_list:
+    if not file.isdigit():
+        continue
     dd = int(file)
     formatted_dd = "{:05}".format(dd)  # 使用格式化字符串
     image_path = path + r"/{}/normal_{}.exr".format(file,formatted_dd)
