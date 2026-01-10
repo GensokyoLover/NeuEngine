@@ -2086,7 +2086,7 @@ float4 sampleImpostorSingleViewLevel(uint2 pixel, in Impostor impostor, float3 r
 
         if (i == 0 && textureDepth2.x < 9) {
             gAlbedo0[pixel] = trueUV;
-            gDepth0[pixel] = float4(ConeScale,1);
+            gDepth0[pixel] = float4(ConeScale, hitDepthEnter);
             gDir0[pixel] = float4(camF, viewIdx);
             result = float4(normal,1);
         }
@@ -2096,7 +2096,7 @@ float4 sampleImpostorSingleViewLevel(uint2 pixel, in Impostor impostor, float3 r
         }
         if (i == 1 && textureDepth2.x < 9) {
             gAlbedo1[pixel] = trueUV;
-            gDepth1[pixel] = float4(ConeScale, 1);
+            gDepth1[pixel] = float4(ConeScale, hitDepthEnter);
             gDir1[pixel] = float4(camF, viewIdx);
             result = float4(normal, 1);
         }
@@ -2106,7 +2106,7 @@ float4 sampleImpostorSingleViewLevel(uint2 pixel, in Impostor impostor, float3 r
         }
         if (i == 2 && textureDepth2.x < 9) {
             gAlbedo2[pixel] = trueUV;
-            gDepth2[pixel] = float4(ConeScale, 1);
+            gDepth2[pixel] = float4(ConeScale, hitDepthEnter);
             result = float4(normal, 1);
             gDir2[pixel] = float4(camF, viewIdx);
         }

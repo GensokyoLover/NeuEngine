@@ -133,7 +133,7 @@ camera_pos = impostor.cPosition[0].clone().float().cuda()
 forward    = impostor.cForward[0].clone().float().cuda()
 up         = torch.tensor([0,1,0], dtype=torch.float32).cuda()
 
-W, H = 256, 256
+W, H = 64, 64
 
 move_speed = 0.02
 rot_speed = 3 * math.pi / 180   # 3 degrees
@@ -150,7 +150,7 @@ roughness = torch.round(torch.arange(0.0, 1.0 + 1e-9, 0.01) * 100) / 100
 theta95_deg = ggx_theta_from_roughness(roughness, alpha_is_roughness_sq=True, degrees=True,energy_clamp=75).cuda()
 # dataset_process(r"H:/Falcor/media/inv_rendering_scenes/bunny_ref_nobunny_roughnesscorrect/",impostor)
 # exit()
-impostor =load_zst(r"H:\Falcor\datasets\impostor\dragon\level1/impostor.pkl.zst")
+impostor =load_zst(r"H:\Falcor\datasets\impostor\flame\level1/impostor.pkl.zst")
 label = "roughness_9"
 log_dir = "./runs/{}".format(label)
 ensure_dir(log_dir)
@@ -161,7 +161,7 @@ ensure_dir(debug_dir)
 ckpt_save_path = "./ckpt/{}".format(label)
 ensure_dir(ckpt_save_path)
 global_step = 0
-training_data = ImpostorTrainingDataset(r"H:/Falcor/datasets/renderdata/dragon/train")
+training_data = ImpostorTrainingDataset(r"H:/Falcor/datasets/renderdata/flame/train")
 #test_data = ImpostorTrainingTestDataset(r"H:/Falcor/media/inv_rendering_scenes/bunny_ref_nobunny9_25/")
 training_data_loader = DataLoader(training_data, batch_size=1, shuffle=True)
 #test_data_loader = DataLoader(test_data, batch_size=1, shuffle=False)
@@ -219,6 +219,9 @@ for epoch in range(num_epochs):
         scale = 1.0/ impostor.cRadius[0]
         viewidx = train_data["sampleView"][:, 0, 0, :]
         train_data["position"] = train_data["position"] * scale
+        for b in range(3):
+            train_data["idepth{}".format(b)] = train_data["idepth{}".format(b)] * scale
+        train_data["hitdepth"] = train_data["idepth0"][...,3:4] 
         depthDownList = []
         positionDownList = []
         emissionDownList = [[],[],[]]
@@ -239,58 +242,22 @@ for epoch in range(num_epochs):
                 emissionDownList[b].append(mean_downsample_pool(emission[b:b+1,...], 4**(level+1)).permute(0,3,1,2))
             
         gbuffer_input = sellect_gbuffer_data(train_data, ["position", "normal", "roughness", "view"])
-    
+        feature_list = []
         for b in range(3):
             emission_feature = emissive_encoder(emission[b:b+1,...])
-            feature = trilinear_mipmap_sample(emission_feature,train_data["uv{}".format(i)])
-            emission_vis = trilinear_mipmap_sample(emissionDownList[b],train_data["uv{}".format(i)])
-            pyexr.write(r"H:\Falcor\debug/emission_vis_{}.exr".format(b),emission_vis[0,...].permute(1,2,0).cpu().numpy())
-            pyexr.write(r"H:\Falcor\debug/gt_vis_{}.exr".format(b),train_data["AccumulatePassoutput"][0,...].cpu().numpy())
-
+            feature = trilinear_mipmap_sample(emission_feature,train_data["uv{}".format(b)])
+            emission_vis = trilinear_mipmap_sample(emissionDownList[b],train_data["uv{}".format(b)])
+            # pyexr.write(r"H:\Falcor\debug/emission_vis_{}.exr".format(b),emission_vis[0,...].permute(1,2,0).cpu().numpy())
+            # pyexr.write(r"H:\Falcor\debug/gt_vis_{}.exr".format(b),train_data["AccumulatePassoutput"][0,...].cpu().numpy())
+            feature_list.append(feature.permute(0,2,3,1))
+        reflect_cone = torch.cat([train_data["position"],train_data["reflect"],train_data["roughness"],train_data["hitdepth"]],dim=-1)
+        for b in range(3):
+            reflect_cone = torch.cat([reflect_cone,train_data["idirection{}".format(b)][...,:3],train_data["idepth{}".format(b)][...,:2]],dim=-1)
+        #continue
+        weights = mlp_weight(reflect_cone)
+        feature = torch.cat(feature_list,dim=0)
+        combine_feature = (feature * weights.permute(3, 1, 2, 0)).sum(dim=0, keepdim=True)
        
-        referCylinderAxis = F.grid_sample(-direction.permute(0, 3, 1, 2), reflect_uvi, mode="nearest", align_corners=False,padding_mode="border")
-        firstHit = F.grid_sample(depthDownList[1].permute(0, 3, 1, 2), reflect_uvi, mode="nearest", align_corners=False,padding_mode="border")
-        referOrigin = F.grid_sample(positionDownList[0].permute(0, 3, 1, 2), reflect_uvi, mode="nearest", align_corners=False,padding_mode="border")
-        referCylinderRadius = (torch.zeros_like(firstHit) + 16/512).permute(0,2,3,1)
-        referCylinderLenth = referCylinderRadius * 2
-        referCylinderCentor = (firstHit + referCylinderRadius.permute(0,3,1,2)) * referCylinderAxis + referOrigin
-        referCylinderLenth = referCylinderLenth
-        referCylinderCentor = referCylinderCentor.permute(0,2,3,1) 
-        referCylinderAxis = referCylinderAxis.permute(0,2,3,1)
-        singleCentor = referCylinderCentor[0,:,:,:].permute(1,2,0)
-        singleCentor1 = referCylinderCentor[1,:,:,:].permute(1,2,0)
-        singleCentor2 = referCylinderCentor[2,:,:,:].permute(1,2,0)
-        targetCylinderAxis = train_data["reflectDirL"]
-        targetConeAngle = theta95_deg[(torch.where(train_data["roughness"] * 100<2,2,train_data["roughness"] * 100)).int()]
-        targetCylinderRadius = cone_radius_deg(train_data["mind"],targetConeAngle)
-        targetCylinderLenth = targetCylinderRadius * 2
-        targetCylinderCentor = train_data["referencePosL2"]
-        value = relative_cylinder_encoding_with_axis(referCylinderCentor,referCylinderAxis,referCylinderRadius[...,0],referCylinderLenth[...,0],targetCylinderCentor,targetCylinderAxis,targetCylinderRadius[...,0],targetCylinderLenth[...,0])
-        #print(train_data["roughness"].mean())
-        # gbuffer_to_centor = reflect_centor.permute(0, 2, 3, 1) - train_data["refelctPosL"]
-        # angle = angle_between_tensors_atan2(gbuffer_to_centor, train_data["reflectDirL"], dim=-1, degrees=True) / 0.1
-        # reflect_lenth = gbuffer_to_centor.norm(dim=-1, keepdim=True)
-        # mini, _ = reflect_lenth.min(dim=0, keepdim=True)
-        # reflect_lenth = reflect_lenth - mini                               
-        # reflect_input = torch.zeros_like(emission)
-        # reflect_input = reflect_input.permute(1, 2, 0, 3).reshape(1, 256, 256, 15)
-        # for i in range(3):
-        #     pyexr.write("./reflect_emission{}.exr",emission_vis[i].permute(1,2,0).reshape(H,W,3).cpu().numpy())
-        # pyexr.write("./gt.exr",train_data["AccumulatePassoutput"].reshape(H,W,3).cpu().numpy())
-        reflect_input =value.permute(1,2,0,3).reshape(1,256,256,15)
-        weight = mlp_weight(reflect_input)  # 期望 (1,256,256,3) or 等价
-
-        feature = F.grid_sample(
-            emission_feature["I0"],
-            reflect_uvi,
-            mode="nearest",
-            align_corners=True,
-            padding_mode="border"
-        ).permute(0, 2, 3, 1)  # (3,H,W,C) or (V,H,W,C)
-
-        # weight: (1,256,256,3) -> (3,256,256,1) to broadcast with feature
-        # 你原来是 weight.permute(3,1,2,0) => (3,256,256,1)
-        combine_feature = (feature * weight.permute(3, 1, 2, 0)).sum(dim=0, keepdim=True)
 
         decoder_input = torch.cat([combine_feature, gbuffer_input], dim=-1)
         #decoder_input = torch.cat([combine_feature, gbuffer_input], dim=-1)
