@@ -645,7 +645,7 @@ namespace Falcor
             mMaterialTypes.insert(pMaterial->getType());
             if (isSpecGloss(pMaterial)) mHasSpecGlossStandardMaterial = true;
         }
-
+        mTextureDescCount = 1000;
         FALCOR_CHECK(mMaterialTypes.find(MaterialType::Unknown) == mMaterialTypes.end(), "Unknown material type found. Make sure all material types are registered.");
     }
 

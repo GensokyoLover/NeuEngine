@@ -313,6 +313,11 @@ void VBufferRT::executeCompute(RenderContext* pRenderContext, const RenderData& 
     // Create compute pass.
     //std::cout << "compute" << std::endl;
     FALCOR_PROFILE(pRenderContext,"cs");
+    if (pRenderContext->gframeCount >= 3) {
+        
+        return;
+    }
+  
     if (!mpComputePass)
     {
         ProgramDesc desc;
@@ -364,9 +369,6 @@ void VBufferRT::executeCompute(RenderContext* pRenderContext, const RenderData& 
 
     impostorInit = true;
    
-
-    printf("now frame %d\n", mFrameCount);
-    printf("now impostorsize %d\n", int(mpScene->mImpostors.size()));
     // ✅ 每帧重新取 rootVar（轻量）
    // ShaderVar rootVar = mpComputePass->getRootVar();
     rootVar["gVBufferRT"]["roughness"] = mpRoughness;

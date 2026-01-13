@@ -4124,13 +4124,7 @@ namespace Falcor
         FALCOR_ASSERT(nodeID < mSceneGraph.size());
 
         Node& node = mSceneGraph[nodeID];
-        for (int i = 0; i < 4; i++)
-        {
-            for (int j = 0; j < 4; j++)
-            {
-                printf("%f ",transform[i][j]);
-            }
-        }
+
         node.transform = validateTransformMatrix(transform);
         mpAnimationController->setNodeEdited(nodeID);
     }
@@ -4275,7 +4269,7 @@ namespace Falcor
             }
             nodeID++;
         }
-        std::cout << ("update" + name + std::to_string(nodeID)) << std::endl;
+
         if (nodeID == mSceneGraph.size()) {
             return;
         }

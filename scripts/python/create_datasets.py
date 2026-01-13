@@ -503,7 +503,7 @@ def worker_process(worker_id, resolution, scene_name,
         height=resolution[1],
         create_window=False,
         device=device,
-        spp=16
+        spp=2000
     )
     render_graph_MinimalPathTracer(testbed,len(impostor_list) + 5)
     cmd_list = []
@@ -544,7 +544,7 @@ def worker_process(worker_id, resolution, scene_name,
     cnt = 0
     while True:
         task = task_queue.get()
-
+        t0 = time.time()
         if task == "STOP":
             print(f"[Worker {worker_id}] Stopping.")
             break
@@ -602,21 +602,29 @@ def worker_process(worker_id, resolution, scene_name,
         camera_data["forward"] = list(normalize(f3_to_numpy( testbed.scene.camera.target) - f3_to_numpy( testbed.scene.camera.position)))
         # Run render
         testbed.run()
-
+        output_path_list = []
+        index_list =[]
         for name in select_list:
             index = object_data_dict[name]
-            print(index)
+         
             testbed.capture_output(
                 level_output_path + f'{name}_{i:05d}.exr',
                 index
             )
-
+            output_path_list.append(level_output_path + f'{name}_{i:05d}.exr')
+            index_list.append(index)
+        #testbed.capture_output_batch(output_path_list,index_list)
+        
         print(f"[Worker {worker_id}] Finished frame {i}")
         with open(level_output_path + "node.json","w") as f:
             json.dump(node_dict, f, indent=4, ensure_ascii=False)
         with open(level_output_path + "camera.json","w") as f:
             json.dump(camera_data, f, indent=4, ensure_ascii=False)
+        t1 = time.time()    
+        elapsed = t1 - t0    
+        print(f"[Worker {worker_id}] Finished frame {i} in {elapsed:.4f}s")
         result_queue.put((i))
+        
 def start_render_farm(resolution, scene_path, output_path,
                       object_data_dict, select_list,
                       num_workers=8, num_frames=500,impostor_list = [],emissive_list = []):
@@ -666,13 +674,13 @@ def main():
 
     # Create device and setup renderer.
     start_render_farm(
-        resolution=[1920,1080],
+        resolution=[960,540],
         scene_path=scene_name,
         output_path=datasets_path,
         object_data_dict=object_key_dict,
         select_list=sellect_list,
-        num_workers=2,
-        num_frames=200,
+        num_workers=3,
+        num_frames=300,
         impostor_list=impostor_list,
         emissive_list=emissive_list
     )

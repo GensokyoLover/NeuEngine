@@ -128,6 +128,7 @@ public:
 
     /// Capture the output of a render graph and write it to a file.
     void captureOutput(const std::filesystem::path& path, uint32_t outputIndex = 0);
+    void captureOutputBatch(const std::vector<std::string>& pathList,const std::vector<uint32_t>& outputIndex);
 
     /// Set the texture to be rendered on the main window (overrides render graph output).
     void setRenderTexture(const ref<Texture>& texture) { mpRenderTexture = texture; }

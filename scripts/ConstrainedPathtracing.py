@@ -39,7 +39,7 @@ def render_graph_MinimalPathTracer():
     g.markOutput("MinimalPathTracer.view")
     g.markOutput("MinimalPathTracer.raypos")
     g.markOutput("MinimalPathTracer.mind")
-    for i in range(3):
+    for i in range(5):
         g.markOutput("VBufferRT2.uv0_{}".format(i))
         g.markOutput("VBufferRT2.uv1_{}".format(i))
         g.markOutput("VBufferRT2.uv2_{}".format(i))

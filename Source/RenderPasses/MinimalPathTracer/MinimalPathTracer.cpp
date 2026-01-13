@@ -191,7 +191,7 @@ void MinimalPathTracer::execute(RenderContext* pRenderContext, const RenderData&
     auto var = mTracer.pVars->getRootVar();
     //var["CB"]["gFrameCount"] = mFrameCount;
     var["CB"]["gFrameCount"] = pRenderContext->gframeCount;
-    printf("minipath %d\n", pRenderContext->gframeCount);
+
    // printf("frame %d\n", pRenderContext->gframeCount);
     var["CB"]["gPRNGDimension"] = dict.keyExists(kRenderPassPRNGDimension) ? dict[kRenderPassPRNGDimension] : 0u;
 

@@ -37,10 +37,10 @@
 #include "Utils/UI/InputTypes.h"
 #include "RenderGraph/RenderPassStandardFlags.h"
 #include <imgui.h>
-
+#include <execution> // 需要 C++17 支持并行算法
 namespace Falcor
 {
-
+    struct SaveTask { std::filesystem::path filePath;    uint32_t width;    uint32_t height;    Bitmap::FileFormat fileFormat;    Bitmap::ExportFlags flags;    ResourceFormat resourceFormat;    std::vector<uint8_t> data; };
 Testbed::Testbed(const Options& options)
 {
     internalInit(options);
@@ -146,6 +146,85 @@ void Testbed::frame()
 
 }
 
+
+void Testbed::captureOutputBatch(const std::vector<std::string>& pathList, const std::vector<uint32_t>& indexList) {
+    if (pathList.size() != indexList.size()) {
+        logError("Testbed::captureOutputBatch: pathList and indexList must have the same size.");
+        return;
+    }
+
+    if (!mpImageProcessing) mpImageProcessing = std::make_unique<ImageProcessing>(mpDevice);
+    RenderContext* pRenderContext = mpDevice->getRenderContext();
+
+    for (size_t i = 0; i < indexList.size(); ++i) {
+        uint32_t outputIndex = indexList[i];
+        std::filesystem::path currentPath = pathList[i]; // 直接使用你提供的完整路径
+
+        const std::string outputName = mpRenderGraph->getOutputName(outputIndex);
+        const auto& pGraphOutput = mpRenderGraph->getOutput(outputName);
+
+        if (!pGraphOutput) continue;
+
+        const ref<Texture> pOutput = pGraphOutput->asTexture();
+        if (!pOutput) {
+            logWarning("Graph output {} is not a texture. Skipping.", outputName);
+            continue;
+        }
+
+        const ResourceFormat format = pOutput->getFormat();
+        const uint32_t channels = getFormatChannelCount(format);
+
+        // 注意：如果一个 outputIndex 包含多个 mask，下面的循环会多次执行
+        // 由于使用了同一个 pathList[i]，后者可能会覆盖前者。
+        // 既然你指定了路径，这里假设你已经处理好了 Mask 与 Path 的对应关系，或者每个 Index 只有一个 Mask。
+        for (auto mask : mpRenderGraph->getOutputMasks(outputIndex)) {
+            uint32_t outputChannels = 0;
+            switch (mask) {
+            case TextureChannelFlags::Red:   outputChannels = 1; break;
+            case TextureChannelFlags::Green: outputChannels = 1; break;
+            case TextureChannelFlags::Blue:  outputChannels = 1; break;
+            case TextureChannelFlags::Alpha: outputChannels = 1; break;
+            case TextureChannelFlags::RGB:   outputChannels = 3; break;
+            case TextureChannelFlags::RGBA:  outputChannels = 4; break;
+            default: continue;
+            }
+
+            // GPU 处理逻辑 (必须在主线程执行)
+            ref<Texture> pTex = pOutput;
+            if (outputChannels == 1 && channels > 1) {
+                ResourceFormat outputFormat = ResourceFormat::Unknown;
+                uint bits = getNumChannelBits(format, mask);
+
+                FormatType type = getFormatType(format);
+                if (type == FormatType::Unorm || type == FormatType::UnormSrgb) outputFormat = (bits == 16) ? ResourceFormat::R16Unorm : ResourceFormat::R8Unorm;
+                else if (type == FormatType::Snorm) outputFormat = (bits == 16) ? ResourceFormat::R16Snorm : ResourceFormat::R8Snorm;
+                else if (type == FormatType::Uint) outputFormat = (bits == 32) ? ResourceFormat::R32Uint : ((bits == 16) ? ResourceFormat::R16Uint : ResourceFormat::R8Uint);
+                else if (type == FormatType::Sint) outputFormat = (bits == 32) ? ResourceFormat::R32Int : ((bits == 16) ? ResourceFormat::R16Int : ResourceFormat::R8Int);
+                else if (type == FormatType::Float) outputFormat = (bits == 32) ? ResourceFormat::R32Float : ResourceFormat::R16Float;
+
+                if (outputFormat == ResourceFormat::Unknown) continue;
+
+                // 创建临时纹理并拷贝通道 (GPU操作)
+                pTex = mpDevice->createTexture2D(
+                    pOutput->getWidth(), pOutput->getHeight(), outputFormat, 1, 1, nullptr,
+                    ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess
+                );
+                mpImageProcessing->copyColorChannel(pRenderContext, pOutput->getSRV(0, 1, 0, 1), pTex->getUAV(), mask);
+            }
+
+            // 确定文件格式以便编码器正确工作 (依然通过纹理格式判断，但文件名使用你提供的)
+            auto ext = Bitmap::getFileExtFromResourceFormat(pTex->getFormat());
+            auto fileformat = Bitmap::getFormatFromFileExtension(ext);
+            Bitmap::ExportFlags flags = Bitmap::ExportFlags::None;
+            flags |= Bitmap::ExportFlags::ExportAlpha;
+
+            // 调用 captureToFile
+            // currentPath: 你提供的完整路径 (例如 "C:/Out/Image.png")
+            // async = true: 开启后台线程保存，不阻塞主循环
+            pTex->captureToFile(0, 0, currentPath, fileformat, flags, true /* async */);
+        }
+    }
+}
 void Testbed::resizeFrameBuffer(uint32_t width, uint32_t height)
 {
     if (mpWindow)
@@ -765,6 +844,7 @@ FALCOR_SCRIPT_BINDING(Testbed)
     testbed.def("create_render_graph", &Testbed::createRenderGraph, "name"_a = "");
     testbed.def("load_render_graph", &Testbed::loadRenderGraph, "path"_a);
     testbed.def("capture_output", &Testbed::captureOutput, "path"_a, "output_index"_a = uint32_t(0)); // PYTHONDEPRECATED
+    testbed.def("capture_output_batch", &Testbed::captureOutputBatch, "pathList"_a, "indexList"_a = uint32_t(0)); // PYTHONDEPRECATED
     testbed.def("get_import_paths", &Testbed::getImportPaths);
     testbed.def("get_import_dicts", &Testbed::getImportDicts);
     testbed.def_property_readonly("profiler", [](Testbed* pTestbed) { return pTestbed->getDevice()->getProfiler(); });
