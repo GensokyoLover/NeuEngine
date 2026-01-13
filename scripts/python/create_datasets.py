@@ -503,7 +503,7 @@ def worker_process(worker_id, resolution, scene_name,
         height=resolution[1],
         create_window=False,
         device=device,
-        spp=500
+        spp=16
     )
     render_graph_MinimalPathTracer(testbed,len(impostor_list) + 5)
     cmd_list = []

@@ -179,10 +179,13 @@ namespace Falcor
             return false;
         }
 
-        if (pTexture == getTexture(slot)) return false;
+        auto& slotData = mTextureSlotData[(size_t)slot];
 
-        FALCOR_ASSERT((size_t)slot < mTextureSlotInfo.size());
-        mTextureSlotData[(size_t)slot].pTexture = pTexture;
+        // ⭐ 关键：先显式释放旧 texture
+        slotData.pTexture = nullptr;
+
+        // 然后再赋新 texture
+        slotData.pTexture = pTexture;
 
         markUpdates(UpdateFlags::ResourcesChanged);
         if (slot == TextureSlot::Emissive)
