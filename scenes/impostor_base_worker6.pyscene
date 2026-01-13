@@ -1,0 +1,34 @@
+camera = Camera()
+camera.position = float3(0.1, 0.5, 1.8)
+camera.target = float3(0, 0.13, 0.9)
+camera.up = float3(0, 1, 0)
+camera.focalLength = 42.0
+sceneBuilder.addCamera(camera)
+
+# ==== AUTO GENERATED FOR WORKER 6 ====
+lightMesh = TriangleMesh()
+
+normal = float3(0, 1, 0)
+
+# 四个角
+lightMesh.addVertex(float3(-0.7071, 0,  0.7071), normal, float2(0, 0))
+lightMesh.addVertex(float3( 0.7071, 0,  0.7071), normal, float2(1, 0))
+lightMesh.addVertex(float3( 0.7071, 0, -0.7071), normal, float2(1, 1))
+lightMesh.addVertex(float3(-0.7071, 0, -0.7071), normal, float2(0, 1))
+
+# 两个三角形
+lightMesh.addTriangle(0, 1, 2)
+lightMesh.addTriangle(0, 2, 3)
+
+
+light = StandardMaterial('Light')
+light.baseColor = float4(0)
+light.emissiveColor = float3(0, 0, 0)
+light.emissiveFactor = 1
+light.roughness = 1
+light.metallic = 1
+sceneBuilder.addMeshInstance(
+    sceneBuilder.addNode('Light', Transform(scaling=1.0, translation=float3(0, 0.0, 0.0), rotationEulerDeg=float3(0, 0, 0))),
+    sceneBuilder.addTriangleMesh(lightMesh, light)
+)
+sceneBuilder.addTextureSlot("Light",r"H:\Falcor\emissive_crop\zoltan-tasi-8Ce-NRKCq4s-unsplash.jpg","Emissive")

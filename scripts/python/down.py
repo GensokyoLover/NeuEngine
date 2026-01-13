@@ -33,34 +33,96 @@ def downsample_depth_minmax(x, fw, fh):
     y = torch.cat([y0, y1, y23], dim=1)
 
     return y.permute(0, 3, 2, 1).contiguous()
+def process_one_file(path, file):
+    if not file.isdigit():
+        return
+
+    dd = int(file)
+    formatted_dd = f"{dd:05d}"
+
+    # ---------- depth ----------
+    depth_path = os.path.join(path, file, f"depth_{formatted_dd}.exr")
+    data = pyexr.read(depth_path)
+    data_tensor = torch.from_numpy(data)
+
+    for level in range(10):
+        down_scale = 1 << level
+        value = (
+            downsample_depth_minmax(
+                data_tensor.unsqueeze(0),
+                down_scale,
+                down_scale
+            )
+            .squeeze(0)
+            .cpu()
+            .numpy()
+        )
+
+        target_path = os.path.join(path, file, f"{level}depth.exr")
+        pyexr.write(target_path, value)
+
+    # ---------- normal ----------
+    normal_path = os.path.join(path, file, f"normal_{formatted_dd}.exr")
+    normal = pyexr.read(normal_path)
+    target_normal_path = os.path.join(path, file, "normal.exr")
+    pyexr.write(target_normal_path, normal)
+from concurrent.futures import ProcessPoolExecutor, as_completed
+
+def process_impostor(path):
+    file_list = os.listdir(path)
+
+    with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
+        futures = []
+        for file in file_list:
+            futures.append(
+                executor.submit(process_one_file, path, file)
+            )
+
+        for f in as_completed(futures):
+            # 如果子进程炸了，这里会抛异常
+            f.result()
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DTYPE = torch.float32
-path = r"H:\Falcor\datasets\impostor\flame\level1"
-file_list = os.listdir(path)
-for file in file_list:
-    if not file.isdigit():
-        continue
-    dd = int(file)
-    formatted_dd = "{:05}".format(dd)  # 使用格式化字符串
-    image_path = path + r"/{}/depth_{}.exr".format(file,formatted_dd)
-    print(image_path)
-    data = pyexr.read(image_path)
-    data_tensor = torch.Tensor(data)
-    for level in range(10):
-        down_scale = 1<<level
-        value = downsample_depth_minmax(data_tensor.unsqueeze(0), down_scale, down_scale).squeeze(0).cpu().numpy()
-        target_image_path =  path + r"/{}/{}depth.exr".format(file,level)
-        print(down_scale)
-        pyexr.write(target_image_path, value)
-for file in file_list:
-    if not file.isdigit():
-        continue
-    dd = int(file)
-    formatted_dd = "{:05}".format(dd)  # 使用格式化字符串
-    image_path = path + r"/{}/normal_{}.exr".format(file,formatted_dd)
-    print(image_path)
-    data = pyexr.read(image_path)
+if __name__ == "__main__":
+    root = r"H:\Falcor\datasets\impostor"
+    impostor_list = os.listdir(root)
 
-    target_image_path =  path + r"/{}/normal.exr".format(file)
-    pyexr.write(target_image_path, data)
+    for impostor in impostor_list:
+        path = os.path.join(root, impostor, "level1")
+        if not os.path.isdir(path):
+            continue
+
+        print(f"[INFO] Processing {path}")
+        process_impostor(path)
+
+# impostor_list = os.listdir(r"H:\Falcor\datasets/impostor/")
+# for impostor in impostor_list:
+#     path = r"H:\Falcor\datasets\impostor/{}\level1".format(impostor)
+#     file_list = os.listdir(path)
+#     for file in file_list:
+#         if not file.isdigit():
+#             continue
+#         dd = int(file)
+#         formatted_dd = "{:05}".format(dd)  # 使用格式化字符串
+#         image_path = path + r"/{}/depth_{}.exr".format(file,formatted_dd)
+#         print(image_path)
+#         data = pyexr.read(image_path)
+#         data_tensor = torch.Tensor(data)
+#         for level in range(10):
+#             down_scale = 1<<level
+#             value = downsample_depth_minmax(data_tensor.unsqueeze(0), down_scale, down_scale).squeeze(0).cpu().numpy()
+#             target_image_path =  path + r"/{}/{}depth.exr".format(file,level)
+#             print(down_scale)
+#             pyexr.write(target_image_path, value)
+#     for file in file_list:
+#         if not file.isdigit():
+#             continue
+#         dd = int(file)
+#         formatted_dd = "{:05}".format(dd)  # 使用格式化字符串
+#         image_path = path + r"/{}/normal_{}.exr".format(file,formatted_dd)
+#         print(image_path)
+#         data = pyexr.read(image_path)
+
+        # target_image_path =  path + r"/{}/normal.exr".format(file)
+        # pyexr.write(target_image_path, data)
 

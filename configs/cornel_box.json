@@ -1,0 +1,22 @@
+{
+    "floor":{
+        "roughness":[0.00,0.2],
+        "baseColor":[[1,1,1],[1,1,1]]
+    },
+    "ceil":{
+        "roughness":[1,1],
+        "baseColor":[[1,1,1],[1,1,1]]
+    },
+    "back":{
+        "roughness":[1,1],
+        "baseColor":[[1,1,1],[1,1,1]]
+    },
+    "left":{
+        "roughness":[1,1],
+        "baseColor":[[1,0,0],[1,0,0]]
+    },
+    "right":{
+        "roughness":[1,1],
+        "baseColor":[[0,1,0],[0,1,0]]
+    }
+}

@@ -31,27 +31,23 @@ import Utils.Math.MathHelpers;
 import Utils.Sampling.SampleGenerator;
 __exported import Scene.Shading;
 import Scene.Impostor.Impostor;
+static const uint objectCount = 11;
 RWTexture2D<PackedHitInfo> gVBuffer;
 RWTexture2D<float> gDepth;
 RWTexture2D<float2> gMotionVector;
 RWTexture2D<float4> gViewW;
 RWTexture2D<uint> gTime;
 RWTexture2D<float> gMask;
-RWTexture2D<float4> gPosition;
-RWTexture2D<float4> gAlbedo;
-RWTexture2D<float4> gAlbedo0;
-RWTexture2D<float4> gAlbedo1;
-RWTexture2D<float4> gAlbedo2;
-RWTexture2D<float4> gDepth0;
-RWTexture2D<float4> gWdepth;
-RWTexture2D<float4> gDepth1;
-RWTexture2D<float4> gDepth2;
-RWTexture2D<float4> gDir1;
-RWTexture2D<float4> gDir2;
-RWTexture2D<float4> gDir0;
-RWTexture2D<float4> gReferenceAlbedo;
-RWTexture2D<float4> gReferenceDepth;
-RWTexture2D<float4> gDebug;
+
+RWTexture2D<float4> gAlbedo0[objectCount];
+RWTexture2D<float4> gAlbedo1[objectCount];
+RWTexture2D<float4> gAlbedo2[objectCount];
+RWTexture2D<float4> gDepth0[objectCount];
+RWTexture2D<float4> gDepth1[objectCount];
+RWTexture2D<float4> gDepth2[objectCount];
+RWTexture2D<float4> gDir1[objectCount];
+RWTexture2D<float4> gDir2[objectCount];
+RWTexture2D<float4> gDir0[objectCount];
 RWTexture2D<float4> gPrePosition;
 RWTexture2D<float4> gPreDirection;
 RWTexture2D<float4> gPreRoughness;
@@ -94,8 +90,19 @@ struct VBufferRT
 
     uint2 frameDim;
     uint frameCount;
-    Impostor gImpostor;
+    Impostor gImpostor0;
+    Impostor gImpostor1;
+    Impostor gImpostor2;
+    Impostor gImpostor3;
+    Impostor gImpostor4;
+    Impostor gImpostor5;
+    Impostor gImpostor6;
+    Impostor gImpostor7;
+    Impostor gImpostor8;
+    Impostor gImpostor9;
+    Impostor gImpostor10;
     int roughness;
+    int impostorCnt;
     
     Ray generateRay(uint2 pixel)
     {
@@ -264,9 +271,9 @@ bool BuildImageRay(
     // 2. ray-sphere entry
     // -----------------------------
     float tEnter;
-    if (!RaySphereIntersect(rayPosW - impostor.centerWS[level],
+    if (!RaySphereIntersect(rayPosW - impostor.centerWS[level].xyz,
                             rayDirW,
-                            impostor.radius[level],
+                            1,
                             tEnter))
             return false;
 
@@ -359,189 +366,8 @@ bool BuildImageRay2(
     return true;
 }
 
-void InitViewDDA(
-    in Impostor impostor,
-    uint viewIdx,
-    ImageRay ray,
-    float tEnter,
-    out ViewDDA s,
-    int level
-)
-{
-    const int res = impostor.texDim[level].x;
-
-    s.viewIdx = viewIdx;
-    s.valid = true;
-
-    float2 uvEnter = ray.uv0 ;
-    s.uvEnter = uvEnter;
-
-    float fx = uvEnter.x * res;
-    float fy = uvEnter.y * res;
-
-    s.ix = (int)floor(fx);
-    s.iy = (int)floor(fy);
-
-    if (s.ix < 0 || s.ix >= res || s.iy < 0 || s.iy >= res)
-    {
-            s.valid = false;
-            return;
-    }
-
-    float du = ray.duv_dt.x;
-    float dv = ray.duv_dt.y;
-
-    s.stepX = (du > 0) ? 1 : -1;
-    s.stepY = (dv > 0) ? 1 : -1;
-
-    float nextU = (s.stepX > 0) ? ((s.ix + 1) / float(res))
-                                : (s.ix / float(res));
-    float nextV = (s.stepY > 0) ? ((s.iy + 1) / float(res))
-                                : (s.iy / float(res));
-
-    s.tMaxX = (abs(du) > 1e-10) ? (nextU - uvEnter.x) / du : 1e30;
-    s.tMaxY = (abs(dv) > 1e-10) ? (nextV - uvEnter.y) / dv : 1e30;
-
-    s.tDeltaX = (abs(du) > 1e-10) ? abs(1.0 / (du * res)) : 1e30;
-    s.tDeltaY = (abs(dv) > 1e-10) ? abs(1.0 / (dv * res)) : 1e30;
-
-    s.tMaxX = max(s.tMaxX, 0.0);
-    s.tMaxY = max(s.tMaxY, 0.0);
-}
-
-bool TraverseImpostorImageDDA(
-    in Impostor impostor,
-    uint3 triView,
-    float3 rayPosW,
-    float3 rayDirW,
-    out float hitDepth,
-    float tNear,
-    float tFar,
-    int level,
-)
-{
-    ImageRay imgRay[3];
-    ViewDDA view[3];
-    for (int i = 0; i < 3; i++) {
-            if (!BuildImageRay(impostor, triView[i], rayPosW, rayDirW, imgRay[i], tNear, level))
-            return false;
-        InitViewDDA(impostor, triView[i], imgRay[i], tNear, view[i],level);
-    }
- 
-    const float eps = 1e-6;
-
-    const int MAX_PIXEL_STEPS = 1024 * 3;
-    float t = tNear;
-    float tEnter = tNear;
-    float tExit = tFar;
-    for (int iter = 0; iter < MAX_PIXEL_STEPS; ++iter)
-    {
-        float tNext = 1e30;
-        int nextView = -1;
-        bool stepX = false;
-
-        for (int i = 0; i < 3; ++i)
-        {
-            if (!view[i].valid) continue;
-
-            if (view[i].tMaxX < tNext)
-            {
-                tNext = view[i].tMaxX;
-                nextView = i;
-                stepX = true;
-            }
-            if (view[i].tMaxY < tNext)
-            {
-                tNext = view[i].tMaxY;
-                nextView = i;
-                stepX = false;
-            }
-        }
 
 
-        float tWorldEnter = t;
-        float tWorldExit = tEnter + tNext;
-        float tMid = 0.5 * (tWorldEnter + tWorldExit);                   
-        if (tWorldEnter > tExit) return false;
-        ViewDDA s = view[nextView];
-        ImageRay ray = imgRay[nextView];
-        // ✅ 代表点对应的 uv（严格沿 ray 的投影线）
-        float2 uv =
-            s.uvEnter + ray.duv_dt * (tMid - tEnter);
-
-        float viewDepth =
-        SampleImpostorPoint(
-            impostor.texDepthArray,
-            impostor.samplerPoint[level],
-            s.viewIdx,
-            uv, level).r;
-        float3 camPos = impostor.cPosition[level][s.viewIdx];
-        float3 camR = impostor.cRight[level][s.viewIdx];
-        float3 camU = impostor.cUp[level][s.viewIdx];
-        float3 camF = impostor.cForward[level][s.viewIdx];
-        float rView = impostor.cRadius[level][s.viewIdx];
-        float depthRayEnter = dot(
-            (rayPosW + tWorldEnter * rayDirW) - camPos,
-            camF
-        );
-
-        float depthRayExit = dot(
-            (rayPosW + tWorldExit * rayDirW) - camPos,
-            camF
-        );
-        float rayMinDepth = min(depthRayEnter, depthRayExit);
-        float rayMaxDepth = max(depthRayEnter, depthRayExit);
-        if (viewDepth<9 )
-        {
-            float rView = impostor.cRadius[level][s.viewIdx];
-
-            // 用 uv 重建 view 平面上的 x,y（与你原先的定义一致）
-            float x = (uv.x * 2.0 - 1.0) * rView;
-            float y = (uv.y * 2.0 - 1.0) * rView;
-
-            float3 Pview = camPos + x * camR + y * camU + viewDepth * camF;
-
-            float3 samplePos = rayPosW + tMid * rayDirW;
-            float dist = length(samplePos - Pview);
-
-            // TODO：把这个阈值换成你原来那套更严谨的判定
-            if (dist < impostor.radius[level] * pow(2, level) / 128.0)
-            {
-                hitDepth = tMid;
-                //hitDepth = iter;
-                return true;
-            }
-        }
-
-        // ---------------------------------------
-        // 4) 前进到下一个 cell：比较 tMaxX 和 tMaxY
-        // ---------------------------------------
-        if (stepX)
-        {
-            view[nextView].ix += view[nextView].stepX;
-            view[nextView].tMaxX += view[nextView].tDeltaX;
-        }
-        else
-        {
-            view[nextView].iy += view[nextView].stepY;
-            view[nextView].tMaxY += view[nextView].tDeltaY;
-        }
-
-        // 越界则该 view 失效
-        if (view[nextView].ix < 0 || view[nextView].ix >= impostor.texDim[level].x ||
-        view[nextView].iy < 0 || view[nextView].iy >= impostor.texDim[level].x)
-        {
-            view[nextView].valid = false;
-        }
-
-        t = tWorldExit;
-
-        // 处理极端：如果 du/dv 很小，tDelta 会非常大，导致 tWorld 直接超过 tExit
-            // 上面已经用 tWorld>tExit 退出了
-    }
-
-    return false;
-}
 
 // bool RecursiveTraverseImpostorImageDDA(
 //     in Impostor impostor,
@@ -776,7 +602,7 @@ bool CheckImpostorHit(
 )
 {
     // 1. 计算阈值
-    float threshold = (impostor.radius[0] / 128.0) * float(1 << level) ;
+    float threshold = (1 / 128.0) * float(1 << level) ;
 
     // 2. 计算 UV (基于进入点)
     float2 uv = rayData.uv0 + rayData.duv_dt * tEnter;
@@ -811,7 +637,7 @@ bool CheckImpostorHit(
     // 6. 深度重叠测试 (Intersection Test)
     // 逻辑：光线的最大深度大于物体的最小深度，且光线的最小深度小于物体的最大深度(带阈值)
     
-    if (textureDepth.x - eps_min < rayDepthMax && rayDepthMin - (impostor.radius[0] / 128.0) < textureDepth.y + eps_max)
+    if (textureDepth.x - eps_min < rayDepthMax && rayDepthMin - (1 / 128.0) < textureDepth.y + eps_max)
     {
         return true;
     }
@@ -910,7 +736,7 @@ bool SingleCheckImpostorHit(
 )
 {
     // 1. 计算阈值
-    float threshold = (impostor.radius[0] / 128.0) * float(1 << level);
+    float threshold = (1 / 128.0) * float(1 << level);
 
     // 2. 计算 UV (基于进入点)
     float2 uv = rayData.uv0 + rayData.duv_dt * (tEnter + tExit)/2;
@@ -955,7 +781,7 @@ bool SingleCheckImpostorHit(
     // 6. 深度重叠测试 (Intersection Test)
     // 逻辑：光线的最大深度大于物体的最小深度，且光线的最小深度小于物体的最大深度(带阈值)
     sample = float4(textureDepth.x, textureDepth.y, 0, 1);
-    if (textureDepth.x < rayDepthMax + (impostor.radius[0] / 128.0) && rayDepthMin - (impostor.radius[0] / 128.0) < textureDepth.y )
+    if (textureDepth.x < rayDepthMax + (1 / 128.0) && rayDepthMin - (1 / 128.0) < textureDepth.y )
     {
         //sample = float4(0);
         return true;
@@ -1102,7 +928,7 @@ bool SphereCheckImpostorHit(// 球体假设
     // 6. 深度重叠测试 (Intersection Test)
     // 逻辑：光线的最大深度大于物体的最小深度，且光线的最小深度小于物体的最大深度(带阈值)
     
-    if (textureDepth.x < rayDepthMax + (impostor.radius[0] / 128.0) && rayDepthMin - (impostor.radius[0] / 128.0) < textureDepth.y)
+    if (textureDepth.x < rayDepthMax + (1 / 128.0) && rayDepthMin - (1 / 128.0) < textureDepth.y)
     {
         // sample = float4(0);
         return true;
@@ -1148,7 +974,7 @@ float3 rayPosW,
     const int MAX_STEPS = 2048;
     float4 ot = float4(0, 0, 0, 1);
     uint endlevel = 0;
-    float inv_scale = (tCurrent * depth_tanh) / impostor.radius[0] ;
+    float inv_scale = (tCurrent * depth_tanh) / 1 ;
     if (inv_scale <= 1.0 / 512)
         endlevel = 0;
     else if (inv_scale <= 1.0 / 182)
@@ -1237,7 +1063,7 @@ float3 rayPosW,
         }
 
         tCurrent = tWorldExit;
-        inv_scale = (tCurrent * depth_tanh) / impostor.radius[0];
+        inv_scale = (tCurrent * depth_tanh) / 1;
         if (inv_scale <= 1.0 / 512)
             endlevel = 0;
         else if (inv_scale <= 1.0 / 182)
@@ -1384,92 +1210,7 @@ float3 rayPosW,
 //     sampleUV = ot;
 //     return false;
 // }
-float4 sampleImpostorMarching(uint2 pixel, in Impostor impostor, float3 rayDirW, float3 rayPosW, int level, float depth_tanh)
-{
-    init(pixel);
-    float tNear, tFar;
-    if (!RaySphereIntersectNearFar(rayPosW - impostor.centerWS[level], rayDirW, impostor.radius[level], tNear, tFar))
-        return float4(0, 0, 0, 0);
 
-    float minDepth = 1000;
-
-    float4 result = float4(0, 0, 0, 0);
-    uint viewIdx;
-
-    float2 hitUV;
-    float hitDepthEnter;
-    float hitDepthExit;
-    float3 compare_pos;
-    uint3 triView[5];
-    for (int l = 0; l < 5; l++) {
-        triView[l] = getNearestImpostorView(impostor, -normalize(rayDirW), l);
-    }
-    float iter;
-    float4 sampleUV;
-    //return float4(1, 0, 0, 0);
-    if (RecursiveTraverseImpostorImageDDA(
-            impostor,
-                triView,
-                rayPosW,
-                rayDirW,
-                hitDepthEnter,
-                hitDepthExit,
-                compare_pos,
-                tNear,
-                tFar,
-            iter, sampleUV, depth_tanh))
-    {
-        float3 hitposEnter = hitDepthEnter * (1) * rayDirW + rayPosW;
-        float3 hitposExit = hitDepthExit * (1) * rayDirW + rayPosW;
-        float3 hitpos = (hitDepthEnter + hitDepthExit) / 2 * rayDirW + rayPosW;
-        //return float4(hitposEnter, hitDepthEnter);
-        //return float4(iter);
-        for (int i = 0; i < 3; i++) {
-
-            viewIdx = triView[0][i];
-            float3 camPos = impostor.cPosition[0][viewIdx];
-            float3 camR = impostor.cRight[0][viewIdx];
-            float3 camU = impostor.cUp[0][viewIdx];
-            float3 camF = impostor.cForward[0][viewIdx];
-            float rView = impostor.cRadius[0][viewIdx];
-            float3 delta = hitpos - camPos;
-            float x = dot(delta, camR);
-            float y = dot(delta, camU);
-            float2 uv = float2(x, y) * (0.5 / rView) + 0.5;
-            float depth =
-                    SampleImpostorPoint(impostor.texDepthArray,
-                                         impostor.samplerPoint[0],
-                                         viewIdx,
-                                         uv, 0).r;
-            float3 P_view = camPos +
-                        (x * camR) +
-                        (y * camU) +
-                        (depth * camF);
-            if (length(hitpos - P_view) < impostor.radius[0] / 128 * 1) {
-                result =
-                    SampleImpostorPoint(impostor.texNormalArray,
-                                         impostor.samplerPoint[0],
-                                         viewIdx,
-                                         uv, 0);
-            }
-        }
-
-        //result = float4(hitposEnter, 1);
-        gDepth0[pixel] = float4(hitposEnter, 1);
-        gDepth1[pixel] = float4(hitposExit, 1);
-        gDepth2[pixel] = float4(hitDepthEnter, hitDepthExit, 0, 1);
-        gDebug[pixel] = float4(depth_tanh);
-    }
-    else {
-        gDepth0[pixel] = float4(0);
-        gDepth1[pixel] = float4(0);
-        gDepth2[pixel] = float4(0);
-        gDebug[pixel] = float4(depth_tanh);
-    }
-    //return float4(iter);
-    gDebug[pixel] = float4(depth_tanh);
-    return result;
-}
 
 int ComputePowerOfTwoLevel_NoBranch(float smallRadius, float bigRadius)
 {
@@ -1514,7 +1255,7 @@ bool SingleRecursiveTraverseImpostorImageDDA(
 
     const int MAX_STEPS = 2048;
     float4 ot = float4(0, 0, 0, 1);
-    uint endlevel = ComputePowerOfTwoLevel_NoBranch(tCurrent * depth_tanh, impostor.radius[0]);
+    uint endlevel = ComputePowerOfTwoLevel_NoBranch(tCurrent * depth_tanh, 1);
     // iter_cnt = endlevel / 9.0;
     // return true;
 
@@ -1591,7 +1332,7 @@ bool SingleRecursiveTraverseImpostorImageDDA(
         }
 
         tCurrent = tWorldExit;
-        endlevel = ComputePowerOfTwoLevel_NoBranch(tCurrent * depth_tanh, impostor.radius[0]);
+        endlevel = ComputePowerOfTwoLevel_NoBranch(tCurrent * depth_tanh, 1);
 
         while ((level < 9 && tCurrent >= tExitStack[level] - 1e-4) || level < endlevel) {
             level = level + 1;
@@ -1953,21 +1694,23 @@ bool SphereConeOverlap(
     return tNear <= tFar;
 }
 
-float4 sampleImpostorSingleViewLevel(uint2 pixel, in Impostor impostor, float3 rayDirW, float3 rayPosW, int level, float depth_tanh)
+float4 sampleImpostorSingleViewLevel(uint2 pixel, in Impostor impostor, float3 rayDirW, float3 rayPosW, int level, float depth_tanh,int idx)
 {
     init(pixel);
+    float dirScale = length(rayDirW);
+    float3 rayDirW = normalize(rayDirW);
     float tNear, tFar;
     float tNear2, tFar2;
     //return float4(1);
-    // if (!RaySphereIntersectNearFar(rayPosW - impostor.centerWS[0], rayDirW, impostor.radius[0], tNear, tFar)) {
+    // if (!RaySphereIntersectNearFar(rayPosW - impostor.centerWS[0], rayDirW, 1, tNear, tFar)) {
     //     return float4(0, 0, 0, 0);
     // }
     if (!SphereConeOverlap(
             rayPosW,
             rayDirW,
             depth_tanh,
-            impostor.centerWS[0],
-            impostor.radius[0],
+            impostor.centerWS[0].xyz,
+            1,
             tNear,
             tFar))
         return float4(0, 0, 0, 0);
@@ -2057,11 +1800,7 @@ float4 sampleImpostorSingleViewLevel(uint2 pixel, in Impostor impostor, float3 r
         float uvLenth = hitDepthEnter * depth_tanh * (1.0 / rView) * 0.5;
         float2 textureDepth3;
         textureDepth3 = SmartMinMaxSample( impostor, viewIdx, float2(sampleUV[i].x, sampleUV[i].y), float2(sampleUV[i].z,sampleUV[i].w), float2(512, 512), level);
-        float3 normal =
-                SingleSampleImpostorPoint(impostor.texNormalArray,
-                                        impostor.samplerPoint[0],
-                                        viewIdx,
-                                        uv, 0).rgb;
+
         float3 P_view = camPos +
                     (x * camR) +
                     (y * camU) +
@@ -2077,7 +1816,7 @@ float4 sampleImpostorSingleViewLevel(uint2 pixel, in Impostor impostor, float3 r
         float max_interval = max(sampleUV[i].y - sampleUV[i].x, sampleUV[i].w - sampleUV[i].z) /2;
         float radius = max_interval * rView;
         float3 ConeScale = float3(textureDepth3.x, textureDepth3.y, radius);
-        // if (length(hitpos - P_view) < impostor.radius[0] / 128 * 1) {
+        // if (length(hitpos - P_view) < 1 / 128 * 1) {
         //     result = float4(normal, 1);
         // }
         float2 midUV = float2(sampleUV[i].x + sampleUV[i].y, sampleUV[i].z + sampleUV[i].w) * 0.5;
@@ -2085,40 +1824,38 @@ float4 sampleImpostorSingleViewLevel(uint2 pixel, in Impostor impostor, float3 r
         float4 trueUV = float4(uv.x - uvLenth, uv.x + uvLenth, uv.y - uvLenth, uv.y + uvLenth);
 
         if (i == 0 && textureDepth2.x < 9) {
-            gAlbedo0[pixel] = trueUV;
-            gDepth0[pixel] = float4(ConeScale, hitDepthEnter);
-            gDir0[pixel] = float4(camF, viewIdx);
-            result = float4(normal,1);
+            gAlbedo0[idx][pixel] = trueUV;
+            gDepth0[idx][pixel] = float4(ConeScale, hitDepthEnter);
+            gDir0[idx][pixel] = float4(dirScale, viewIdx,0, viewIdx);
+
         }
         if (i == 0 && textureDepth2.x == 10) {
-            gAlbedo0[pixel] = float4(textureDepth2.x);
-            gDepth0[pixel] = float4(0);
+            gAlbedo0[idx][pixel] = float4(textureDepth2.x);
+            gDepth0[idx][pixel] = float4(0);
         }
         if (i == 1 && textureDepth2.x < 9) {
-            gAlbedo1[pixel] = trueUV;
-            gDepth1[pixel] = float4(ConeScale, hitDepthEnter);
-            gDir1[pixel] = float4(camF, viewIdx);
-            result = float4(normal, 1);
+            gAlbedo1[idx][pixel] = trueUV;
+            gDepth1[idx][pixel] = float4(ConeScale, hitDepthEnter);
+            gDir1[idx][pixel] = float4(dirScale, viewIdx,0, viewIdx);
+
         }
         if (i == 1 && textureDepth2.x == 10) {
-            gAlbedo1[pixel] = float4(textureDepth2.x);
-            gDepth1[pixel] = float4(0);
+            gAlbedo1[idx][pixel] = float4(textureDepth2.x);
+            gDepth1[idx][pixel] = float4(0);
         }
         if (i == 2 && textureDepth2.x < 9) {
-            gAlbedo2[pixel] = trueUV;
-            gDepth2[pixel] = float4(ConeScale, hitDepthEnter);
-            result = float4(normal, 1);
-            gDir2[pixel] = float4(camF, viewIdx);
+            gAlbedo2[idx][pixel] = trueUV;
+            gDepth2[idx][pixel] = float4(ConeScale, hitDepthEnter);
+            gDir2[idx][pixel] = float4(dirScale, viewIdx,0, viewIdx);
         }
         if (i == 2 && textureDepth2.x == 10) {
-            gAlbedo2[pixel] = float4(textureDepth2.x);
-            gDepth2[pixel] = float4(0);
+            gAlbedo2[idx][pixel] = float4(textureDepth2.x);
+            gDepth2[idx][pixel] = float4(0);
         }
     }
 
     // return float4(iter);
-    gDebug[pixel] = (float4(result) + 0.2) * 3;
-    return float4(result);
+    return float4(1);
 }
 
 
@@ -2189,12 +1926,6 @@ bool RaySphereIntersectNearFar(
 }
 
 void init(uint2 pixel) {
-    gAlbedo0[pixel] = float4(0);
-    gAlbedo1[pixel] = float4(0);
-    gAlbedo2[pixel] = float4(0);
-    gDepth0[pixel] = float4(0);
-    gDepth1[pixel] = float4(0);
-    gDepth2[pixel] = float4(0);
 }
 
 
@@ -2258,12 +1989,9 @@ void init(uint2 pixel) {
             gMotionVector[pixel] = motionVector;
         if (is_valid(gMask))
             gMask[pixel] = 1.0f;
-        gPosition[pixel] = float4(position, 1.f);
         uint3 gridDim = uint3(16, 16, 16);
         uint3 pos = uint3((position + 1) / 2 * 16);                  // 映射到 [-1,1]^3
         float3 color = hash3(pos.x * 16 * 16 + pos.y * 16 + pos.z);  // 自定义 hash 函数
-        gAlbedo[pixel] = float4(color, 1.0);
-        gWdepth[pixel].r = length(position - rayOrigin);
 
     }
     
@@ -2277,9 +2005,6 @@ void init(uint2 pixel) {
             gMotionVector[pixel] = {};
         if (is_valid(gMask))
             gMask[pixel] = 0.0f;
-        gPosition[pixel] = float4(0);
-        gAlbedo[pixel] = float4(0);
-        gWdepth[pixel].r = 0;
         // if (is_valid(gViewW))
         //gViewW[pixel] = float4(-rayDir, 0.f);
     }
@@ -2297,8 +2022,7 @@ void init(uint2 pixel) {
     }
     void writeDebug(uint2 pixel, const float4 result)
     {
-        // Write view direction.
-        gDebug[pixel] = result;
+        // Write view direction.ww
     }
     void writeAuxImpostor(uint2 pixel, float4 result)
     {

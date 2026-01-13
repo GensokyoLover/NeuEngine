@@ -133,7 +133,7 @@ camera_pos = impostor.cPosition[0].clone().float().cuda()
 forward    = impostor.cForward[0].clone().float().cuda()
 up         = torch.tensor([0,1,0], dtype=torch.float32).cuda()
 
-W, H = 64, 64
+W, H = 256, 256
 
 move_speed = 0.02
 rot_speed = 3 * math.pi / 180   # 3 degrees
@@ -151,7 +151,7 @@ theta95_deg = ggx_theta_from_roughness(roughness, alpha_is_roughness_sq=True, de
 # dataset_process(r"H:/Falcor/media/inv_rendering_scenes/bunny_ref_nobunny_roughnesscorrect/",impostor)
 # exit()
 impostor =load_zst(r"H:\Falcor\datasets\impostor\flame\level1/impostor.pkl.zst")
-label = "roughness_9_3_cylinder_encoder2"
+label = "1920_1080level3"
 log_dir = "./runs/{}".format(label)
 ensure_dir(log_dir)
 writer = SummaryWriter(log_dir=log_dir)
@@ -294,7 +294,7 @@ for epoch in range(num_epochs):
 
         # tqdm postfix
         pbar.set_postfix(loss=f"{loss.item():.6f}", step=global_step)
-        if (global_step % 10) == 0 and i < 20:
+        if (global_step % 5) == 0 and i < 10:
             save_path = os.path.join(debug_dir, f"step_{global_step:08d}_scene_{i}.exr")
             save_result_exr(output.detach(), gt.detach(), save_path)
         #break

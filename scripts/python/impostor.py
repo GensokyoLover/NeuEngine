@@ -7,7 +7,7 @@ import json
 from utils import * 
 import cv2
 import torch
-def sampling_radii_from_aabb(aabb_min, aabb_max, fov_deg=60, margin=1.05):
+def sampling_radii_from_aabb(aabb_min, aabb_max, fov_deg=60, margin=1.00):
     """
     从AABB计算两种相机下的采样半径：
     1. 正交相机 (orthographic)

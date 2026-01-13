@@ -330,14 +330,14 @@ class MultiScaleImageEncoder(nn.Module):
         x = self.stage1(x)
         I2 = self.out2(x)
 
-        # # I↓4
-        # x = self.down2(x)
-        # x = self.stage2(x)
-        # I4 = self.out4(x)
+        # I↓4
+        x = self.down2(x)
+        x = self.stage2(x)
+        I4 = self.out4(x)
 
-        # # I↓8
-        # x = self.down3(x)
-        # x = self.stage3(x)
-        # I8 = self.out8(x)
+        # I↓8
+        x = self.down3(x)
+        x = self.stage3(x)
+        I8 = self.out8(x)
 
-        return [I0,I2]
+        return [I0,I2,I4,I8]

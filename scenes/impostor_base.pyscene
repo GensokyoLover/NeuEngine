@@ -1,0 +1,6 @@
+camera = Camera()
+camera.position = float3(0.1, 0.5, 1.8)
+camera.target = float3(0, 0.13, 0.9)
+camera.up = float3(0, 1, 0)
+camera.focalLength = 42.0
+sceneBuilder.addCamera(camera)

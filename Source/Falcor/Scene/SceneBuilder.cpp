@@ -407,7 +407,7 @@ namespace Falcor
         
         //mpScene->addVideoTexture("H:\\Falcor\\output_flipped_frames\\");
         for (int i = 0; i < mSceneData.ImpostorList.size(); i++) {
-            mpScene->addImpostor();
+            mpScene->addImpostor(mSceneData.ImpostorNameList[i]);
             mpScene->mImpostors[mpScene->mImpostors.size()-1]->loadFromFolder(mpDevice, mSceneData.ImpostorList[i]);
         }
         mSceneData = {};
@@ -1029,8 +1029,9 @@ namespace Falcor
         FALCOR_ASSERT(mSceneData.cameras.size() <= std::numeric_limits<uint32_t>::max());
         return CameraID(mSceneData.cameras.size() - 1);
     }
-    void SceneBuilder::addImpostor(std::string folderPath) {
+    void SceneBuilder::addImpostor(std::string folderPath,std::string name) {
         mSceneData.ImpostorList.push_back(folderPath);
+        mSceneData.ImpostorNameList.push_back(name);
     }
 
     ref<Camera> SceneBuilder::getSelectedCamera() const
@@ -1097,7 +1098,7 @@ namespace Falcor
         InternalNode internalNode(node);
         internalNode.transform = validateMatrix(node.transform, "transform");
         internalNode.localToBindPose = validateMatrix(node.localToBindPose, "localToBindPose");
-
+		internalNode.tm = node.tm;
         static_assert(NodeID::kInvalidID >= std::numeric_limits<uint32_t>::max());
         if (node.parent.isValid() && node.parent.get() >= mSceneGraph.size()) FALCOR_THROW("Node parent is out of range");
         if (mSceneGraph.size() >= std::numeric_limits<NodeID::IntType>::max()) FALCOR_THROW("Scene graph is too large");
@@ -2910,7 +2911,7 @@ namespace Falcor
         for (size_t i = 0; i < mSceneGraph.size(); i++)
         {
             FALCOR_ASSERT(mSceneGraph[i].parent.get() <= std::numeric_limits<uint32_t>::max());
-            mSceneData.sceneGraph[i] = Scene::Node(mSceneGraph[i].name, mSceneGraph[i].parent, mSceneGraph[i].transform, mSceneGraph[i].meshBind, mSceneGraph[i].localToBindPose);
+            mSceneData.sceneGraph[i] = Scene::Node(mSceneGraph[i].name, mSceneGraph[i].parent, mSceneGraph[i].transform, mSceneGraph[i].meshBind, mSceneGraph[i].localToBindPose,mSceneGraph[i].tm);
         }
     }
 
@@ -3014,7 +3015,7 @@ namespace Falcor
         sceneBuilder.def("getLight", &SceneBuilder::getLight, "name"_a);
         sceneBuilder.def("loadLightProfile", &SceneBuilder::loadLightProfile, "filename"_a, "normalize"_a = true);
         sceneBuilder.def("addCamera", &SceneBuilder::addCamera, "camera"_a);
-        sceneBuilder.def("addImpostor", &SceneBuilder::addImpostor, "folderPath"_a);
+        sceneBuilder.def("addImpostor", &SceneBuilder::addImpostor, "folderPath"_a,"name"_a);
         sceneBuilder.def("addAnimation", &SceneBuilder::addAnimation, "animation"_a);
         sceneBuilder.def("createAnimation", &SceneBuilder::createAnimation, "animatable"_a, "name"_a, "duration"_a);
         sceneBuilder.def("addNode", [] (SceneBuilder* pSceneBuilder, const std::string& name, const Transform& transform, NodeID parent) {
@@ -3023,6 +3024,7 @@ namespace Falcor
             node.name = name;
             node.transform = transform.getMatrix();
             node.parent = parent;
+			node.tm = transform;
             return pSceneBuilder->addNode(node);
         }, "name"_a, "transform"_a = Transform(), "parent"_a = NodeID::kInvalidID);
         sceneBuilder.def("addMeshInstance", &SceneBuilder::addMeshInstance);

@@ -77,7 +77,8 @@ namespace Falcor
 
         /** Get changes flag. */
         bool isDirty() const { return mDirty; }
-
+        float4x4 worldTransform;
+        float4x4 inverseWorldTransform;
     private:
         mutable bool mDirty = false;
         std::string mName;
@@ -107,6 +108,7 @@ namespace Falcor
         uint2 texDim;
         float2 invTexDim;
         uint32_t baseCameraResolution;
+       
     };
 
 } // namespace Falcor

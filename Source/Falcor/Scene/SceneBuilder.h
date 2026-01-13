@@ -325,6 +325,8 @@ namespace Falcor
             float4x4 meshBind;          // For skinned meshes. World transform at bind time.
             float4x4 localToBindPose;   // For bones. Inverse bind transform.
             NodeID parent{ NodeID::Invalid() };
+            Transform tm;
+            
         };
 
         /** Constructor.
@@ -597,7 +599,7 @@ namespace Falcor
             \return The camera ID
         */
         CameraID addCamera(const ref<Camera>& pCamera);
-        void addImpostor(std::string folderPath);
+        void addImpostor(std::string folderPath,std::string name);
         void setMaterial(std::string name,std::string folderPath);
         /** Get the selected camera.
         */

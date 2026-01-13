@@ -1,15 +1,22 @@
 import sys
 import os
-## 根据不同的系统选择不同的path，windows or linux
-import platform
+import platform  # Keep this
 
 os_name = platform.system()
+falcor_python_dir = None
 if os_name == "Windows":
-    os.environ["PATH"]      = r"H:/Falcor\build\windows-vs2022\bin\Debug" + os.environ["PATH"]
-    sys.path.append( r"H:/Falcor\build\windows-vs2022\bin\Debug/python")
-else:
-    os.environ["LD_LIBRARY_PATH"] = r"/seaweedfs_tmp/training/wangjiu/new/NeuEngine/build/linux-clang/bin/Debug"+ os.environ["PATH"]
-    sys.path.append( r"/seaweedfs_tmp/training/wangjiu/new/NeuEngine/build/linux-clang/bin/Debug/python")
+    falcor_dir = r"H:/Falcor\\build\\windows-vs2022\\bin\\Debug"  # Double \\ for raw string
+    os.environ["PATH"] = falcor_dir + ";" + os.environ.get("PATH", "")
+    falcor_python_dir = falcor_dir + r"\python"
+else:  # Linux
+    falcor_dir = r"/seaweedfs_tmp/training/wangjiu/new/NeuEngine/build/linux-clang/bin/Debug"
+    os.environ["PATH"] = falcor_dir + ":" + os.environ.get("PATH", "")
+    os.environ["LD_LIBRARY_PATH"] = falcor_dir + ":" + os.environ.get("LD_LIBRARY_PATH", "")
+    falcor_python_dir = falcor_dir + "/python"
+
+# Prepend for higher priority (better than append)
+sys.path.insert(0, falcor_python_dir)
+
 import falcor
 import numpy as np
 from impostor import *
@@ -69,7 +76,108 @@ def render_graph_ImpostorTracer(testbed):
 import numpy as np
 
 import multiprocessing as mp
-def worker_process(worker_id, resolution, scene_path,
+import textwrap
+
+def save_pyscene_with_worker_id(src_path, worker_id, appended_commands):
+    """
+    src_path: 原始 .pyscene 路径，例如 "scene/xxx.pyscene"
+    worker_id: int 或 str
+    appended_commands: 要追加的字符串
+    """
+
+    base, ext = os.path.splitext(src_path)
+    assert ext == ".pyscene"
+
+    dst_path = f"{base}_worker{worker_id}{ext}"
+
+    # 1. 读取源文件
+    with open(src_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    # 2. 拼接新内容
+    new_content = (
+        content.rstrip() + "\n\n"
+        f"# ==== AUTO GENERATED FOR WORKER {worker_id} ====\n"
+        + appended_commands.strip() + "\n"
+    )
+
+    # 3. 写入新文件
+    with open(dst_path, "w", encoding="utf-8") as f:
+        f.write(new_content)
+
+    return dst_path
+import random
+
+def make_light_cmd(texture_name):
+    IMPOSTOR_TEMPLATE = textwrap.dedent("""\
+lightMesh = TriangleMesh()
+
+normal = float3(0, 1, 0)
+
+# 四个角
+lightMesh.addVertex(float3(-0.7071, 0,  0.7071), normal, float2(0, 0))
+lightMesh.addVertex(float3( 0.7071, 0,  0.7071), normal, float2(1, 0))
+lightMesh.addVertex(float3( 0.7071, 0, -0.7071), normal, float2(1, 1))
+lightMesh.addVertex(float3(-0.7071, 0, -0.7071), normal, float2(0, 1))
+
+# 两个三角形
+lightMesh.addTriangle(0, 1, 2)
+lightMesh.addTriangle(0, 2, 3)
+
+
+light = StandardMaterial('Light')
+light.baseColor = float4(0)
+light.emissiveColor = float3(0, 0, 0)
+light.emissiveFactor = 1
+light.roughness = 1
+light.metallic = 1
+sceneBuilder.addMeshInstance(
+    sceneBuilder.addNode('Light', Transform(scaling=1.0, translation=float3(0, 0.0, 0.0), rotationEulerDeg=float3(0, 0, 0))),
+    sceneBuilder.addTriangleMesh(lightMesh, light)
+)
+sceneBuilder.addTextureSlot("Light",r"H:\Falcor\emissive_crop\\{texture_name}","Emissive")
+""")
+    cmd = IMPOSTOR_TEMPLATE.format(
+        texture_name = texture_name
+    )
+    return cmd
+def make_cmd(name,mesh_path,emissive,roughness):
+    IMPOSTOR_TEMPLATE = textwrap.dedent("""\
+{obj_name} = StandardMaterial('{obj_name}')
+{obj_name}.baseColor = float4(1.0, 1.0, 1.0, 1.0)
+{obj_name}.emissiveColor = float3({emi_r}, {emi_g}, {emi_b})
+{obj_name}.emissiveFactor = 1.0
+{obj_name}.metallic = 1.0
+{obj_name}.roughness = {roughness}
+
+flags = TriangleMeshImportFlags.GenSmoothNormals | TriangleMeshImportFlags.JoinIdenticalVertices
+{obj_name}Mesh = TriangleMesh.createFromFile(
+    r'{mesh_path}',
+    flags
+)
+
+sceneBuilder.addMeshInstance(
+    sceneBuilder.addNode(
+        '{obj_name}',
+        Transform(
+            translation=float3(0,0,0),
+            rotationEulerDeg=float3(0,0,0),
+            scaling=1
+        )
+    ),
+    sceneBuilder.addTriangleMesh({obj_name}Mesh, {obj_name}, True)
+)
+
+""")
+    cmd = IMPOSTOR_TEMPLATE.format(
+        obj_name=name,
+        emi_r=emissive[0], emi_g=emissive[1], emi_b=emissive[2],
+
+        mesh_path=mesh_path,
+        roughness = roughness
+    )
+    return cmd
+def worker_process(emissive,roughness,worker_id, resolution, source_scene_path,obj,
                    object_data_dict, select_list,
                    task_queue: mp.Queue):
     """
@@ -92,7 +200,26 @@ def worker_process(worker_id, resolution, scene_path,
         spp=256
     )
     render_graph_MinimalPathTracer(testbed)
-    testbed.load_scene(scene_path)
+    cmd_list = []
+    
+    impostor_name = obj.split(".")[0]
+    os_name = platform.system()
+    if os_name == "Windows":
+        scene_path = r"H:\Falcor\scenes\scene/{}.pyscene".format(impostor_name)
+        model_path =r"H:\Falcor/model/{}"
+        impostor_path =r"H:\Falcor/datasets/impostor/{}/level1/material.json"
+    
+    material = {}
+    if obj.split(".")[1] == "obj":
+        cmd= make_cmd(impostor_name,model_path.format(obj),emissive,roughness)
+    elif obj.split(".")[1] == "jpg":
+        cmd = make_light_cmd(obj)
+    
+
+    cmd_list.append(cmd)
+    all_cmds = "\n\n".join(cmd_list)
+    dst_path = save_pyscene_with_worker_id(source_scene_path,worker_id,all_cmds)
+    testbed.load_scene(dst_path)
 
     scene = testbed.scene
     testbed.scene.camera.focalLength = 0
@@ -235,53 +362,62 @@ def main():
     # print(lookup_loaded[-1,-1])
     # lookup_loaded = lookup_loaded.astype(np.float32)
     # pyexr.write("./lookup.exr",lookup_loaded)
-
+    os_name = platform.system()
+    
+    
     finest_resolution = 512
     if os_name == "Windows":
-        folder_path = r"H:\Falcor\scenes/impostor/" 
+        folder_path = r"H:\Falcor\emissive_crop/" 
+        #folder_path = r"H:\Falcor/model/" 
+        output_folder2 =  r"H:\Falcor\datasets/impostor/" 
     else:
         folder_path = r"/seaweedfs_tmp/training/wangjiu/new/NeuEngine/scenes/impostor/"
-    
+        output_folder2 = r"/seaweedfs_tmp/training/wangjiu/new/NeuEngine/datasets/impostor/"
     resolution_list = [1024,512,182,64,24,8]
     file_list = os.listdir(folder_path)
     for file in file_list: 
-        if file.split(".")[-1] != "pyscene":
-            continue
-        if file!="flame.pyscene":
-            continue
+
         # if (file.split(".")[0] + "level3") in file_list:
         #     continue
         
         scene_name = file.split(".")[0]
-        scene_path = folder_path + file
-        output_folder =  folder_path + scene_name + "/"
+        output_folder =  output_folder2 + scene_name + "/"
 
         os.makedirs(output_folder, exist_ok=True)
+        os.makedirs(output_folder + "level1/", exist_ok=True)
         # Create device and setup renderer.
-        device = falcor.Device(type=falcor.DeviceType.Vulkan, gpu=0, enable_debug_layer=False)
-        testbed = falcor.Testbed(width=finest_resolution, height=finest_resolution, create_window=False, device=device,spp=16)
-        render_graph_MinimalPathTracer(testbed)
-    
+        if os_name == "Windows":
+            scene_path = r"H:\Falcor\scenes\scene/{}.pyscene".format(scene_name)
+            model_path =r"H:\Falcor/model/{}"
+            impostor_path =r"H:\Falcor/datasets/impostor/{}/level1/material.json"
         #generate_impostor_by_falcor(finest_resolution,testbed,scene_path,output_folder,object_key_dict,sellect_list)
         # start_render_farm(finest_resolution,testbed,scene_path,output_folder,object_key_dict,sellect_list)
         task_queue = mp.Queue()
-        testbed.load_scene(scene_path)
-        scene = testbed.scene
         # 启动 Worker
         workers = []
-        
-        a = f3_to_numpy(scene.bounds.min_point)
-        b = f3_to_numpy(scene.bounds.max_point)
-        centor,object_radius,o_radius,p_radius = sampling_radii_from_aabb(a,b)
-
-        testbed.scene.camera.focalLength = 0
-        testbed.scene.camera.nearPlane = 0.001
-        testbed.scene.add_impostor()
+    
+        # testbed.scene.add_impostor()
+        centor = np.array([0.0,0.0,0.0])
+        o_radius = 1
         base = 1
         basic_info = {}
         basic_info["radius"] = o_radius
         basic_info["centorWS"] = centor.tolist()
-        
+        emissive_list = ["Bunny.obj","dragon.obj"]
+        material= {}
+        if file.split(".")[1] == "jpg":
+            emissive = [0,0,0]
+            roughness = 1
+        elif file in emissive_list:
+            emissive =[random.uniform(0.2,1),random.uniform(0.2,1),random.uniform(0.2,1)] 
+            roughness = random.uniform(0.3,1)
+        else:
+            emissive = [0,0,0]
+            roughness = 0
+        material["emissive"] = emissive
+        material["roughness"] = roughness
+        with open(impostor_path.format(scene_name),"w") as f:
+            json.dump(material,f,indent=4)
         for subdiv_level in range(1,2):
             if subdiv_level>1:
                 level_resolution =  multiply_until_gt_1024(resolution_list[subdiv_level])
@@ -289,16 +425,15 @@ def main():
                 level_resolution = finest_resolution
             # print(level)
             # continue
-            for wid in range(16):
+            for wid in range(8):
                 p = mp.Process(
                     target=worker_process,
-                    args=(wid, level_resolution, scene_path,
+                    args=(emissive,roughness,wid, level_resolution, r"H:\Falcor\scenes/impostor_base.pyscene",file,
                         object_key_dict, sellect_list,
                         task_queue)
                 )
                 p.start()
                 workers.append(p)
-            testbed.resize_frame_buffer(level_resolution,level_resolution)
             basic_info["level"] = subdiv_level
             basic_info["texDim"] = [level_resolution,level_resolution]
             basic_info["invTexDim"] = [1/(level_resolution),1/(level_resolution)] 
@@ -336,14 +471,13 @@ def main():
             radius_info=[]
             for single_pos in camera_positions:
            
-                testbed.scene.camera.position = single_pos
+
         
                 scale_radius = o_radius 
                 radius_info.append(scale_radius)
                 single_info = {}
-                testbed.scene.camera.target = normalize(centor - single_pos) * scale_radius * 2 + single_pos
                 single_info["camera_position"] = list(np.array(single_pos))
-                single_info["camera_target"] = list(f3_to_numpy(testbed.scene.camera.target))
+                single_info["camera_target"] = list(normalize(centor - single_pos) * scale_radius * 2 + single_pos)
                 up = unity_style_up(normalize(centor - single_pos))
                 r,u,f = compute_camera_basis(single_pos,normalize(centor - single_pos) * scale_radius * 2 + single_pos,up)
                 r_list.append(r)

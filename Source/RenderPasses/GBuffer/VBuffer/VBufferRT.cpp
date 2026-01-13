@@ -63,25 +63,11 @@ const ChannelList kVBufferExtraChannels = {
     { "viewW",          "gViewW",           "View direction in world space",    true /* optional */, ResourceFormat::RGBA32Float }, // TODO: Switch to packed 2x16-bit snorm format.
     { "time",           "gTime",            "Per-pixel execution time",         true /* optional */, ResourceFormat::R32Uint     },
     { "mask",           "gMask",            "Mask",                             true /* optional */, ResourceFormat::R32Float    },
-    { "position",           "gPosition",            "Positoin",                             true /* optional */, ResourceFormat::RGBA32Float    },
-    { "albedo",           "gAlbedo",            "Albedo",                             true /* optional */, ResourceFormat::RGBA32Float    },
-    { "uv0",           "gAlbedo0",            "Albedo0",                             true /* optional */, ResourceFormat::RGBA32Float    },
-    { "uv1",           "gAlbedo1",            "Albedo1",                             true /* optional */, ResourceFormat::RGBA32Float    },
-    { "uv2",           "gAlbedo2",            "Albedo2",                             true /* optional */, ResourceFormat::RGBA32Float    },
-    { "wdepth",           "gWdepth",            "Wdepth",                             true /* optional */, ResourceFormat::RGBA32Float    },
-    { "depth0",           "gDepth0",            "Depth0",                             true /* optional */, ResourceFormat::RGBA32Float    },
-    { "depth1",           "gDepth1",            "Depth1",                             true /* optional */, ResourceFormat::RGBA32Float    },
-    { "depth2",           "gDepth2",            "Depth2",                             true /* optional */, ResourceFormat::RGBA32Float    },
-    { "direction0",           "gDir0",            "Depth0",                             true /* optional */, ResourceFormat::RGBA32Float    },
-    { "direction1",           "gDir1",            "Depth1",                             true /* optional */, ResourceFormat::RGBA32Float    },
-    { "direction2",           "gDir2",            "Depth2",                             true /* optional */, ResourceFormat::RGBA32Float    },
-    { "referencealbedo",           "gReferenceAlbedo",            "Referencealbedo",                             true /* optional */, ResourceFormat::RGBA32Float    },
-    { "referencedepth",           "gReferenceDepth",            "Referencedepth",                             true /* optional */, ResourceFormat::RGBA32Float    },
-    { "debug",           "gDebug",            "Debug",                             true /* optional */, ResourceFormat::RGBA32Float    },
-   
     
+
 };
-}; // namespace
+}; //
+
 
 VBufferRT::VBufferRT(ref<Device> pDevice, const Properties& props) : GBufferBase(pDevice)
 {
@@ -111,7 +97,45 @@ RenderPassReflection VBufferRT::reflect(const CompileData& compileData)
 
     // Add all the other outputs.
     addRenderPassOutputs(reflector, kVBufferExtraChannels, ResourceBindFlags::UnorderedAccess, sz);
-
+    for (int i = 0; i < 11; i++) {
+        
+        reflector.addOutput("uv0_"+ std::to_string(i), "uv output")
+            .bindFlags(ResourceBindFlags::UnorderedAccess)
+            .format(ResourceFormat::RGBA32Float)
+            .texture2D(sz.x, sz.y);
+        reflector.addOutput("uv1_" + std::to_string(i), "uv output")
+            .bindFlags(ResourceBindFlags::UnorderedAccess)
+            .format(ResourceFormat::RGBA32Float)
+            .texture2D(sz.x, sz.y);
+        reflector.addOutput("uv2_" + std::to_string(i), "uv output")
+            .bindFlags(ResourceBindFlags::UnorderedAccess)
+            .format(ResourceFormat::RGBA32Float)
+            .texture2D(sz.x, sz.y);
+        reflector.addOutput("depth0_" + std::to_string(i), "uv output")
+            .bindFlags(ResourceBindFlags::UnorderedAccess)
+            .format(ResourceFormat::RGBA32Float)
+            .texture2D(sz.x, sz.y);
+        reflector.addOutput("depth1_" + std::to_string(i), "uv output")
+            .bindFlags(ResourceBindFlags::UnorderedAccess)
+            .format(ResourceFormat::RGBA32Float)
+            .texture2D(sz.x, sz.y);
+        reflector.addOutput("depth2_" + std::to_string(i), "uv output")
+            .bindFlags(ResourceBindFlags::UnorderedAccess)
+            .format(ResourceFormat::RGBA32Float)
+            .texture2D(sz.x, sz.y);
+        reflector.addOutput("direction0_" + std::to_string(i), "uv output")
+            .bindFlags(ResourceBindFlags::UnorderedAccess)
+            .format(ResourceFormat::RGBA32Float)
+            .texture2D(sz.x, sz.y);
+        reflector.addOutput("direction1_" + std::to_string(i), "uv output")
+            .bindFlags(ResourceBindFlags::UnorderedAccess)
+            .format(ResourceFormat::RGBA32Float)
+            .texture2D(sz.x, sz.y);
+        reflector.addOutput("direction2_" + std::to_string(i), "uv output")
+            .bindFlags(ResourceBindFlags::UnorderedAccess)
+            .format(ResourceFormat::RGBA32Float)
+            .texture2D(sz.x, sz.y);
+    }
     return reflector;
 }
 
@@ -329,8 +353,10 @@ void VBufferRT::executeCompute(RenderContext* pRenderContext, const RenderData& 
 
     mpScene->bindShaderDataForRaytracing(pRenderContext, rootVar["gScene"]);
     mpSampleGenerator->bindShaderData(rootVar);
+    for (int i = 0; i < mpScene->mImpostors.size();i++) {
+        mpScene->mImpostors[i]->bindShaderData(rootVar["gVBufferRT"]["gImpostor" + std::to_string(i)]);
+    }
     
-    mpScene->mImpostors[0]->bindShaderData(rootVar["gVBufferRT"]["gImpostor"]);
     /* mpScene->mImpostors[1]->bindShaderData(rootVar["gVBufferRT"]["gImpostor"]);
     mpScene->mImpostors[2]->bindShaderData(rootVar["gVBufferRT"]["gImpostor"]);
     mpScene->mImpostors[3]->bindShaderData(rootVar["gVBufferRT"]["gImpostor"]);
@@ -344,6 +370,7 @@ void VBufferRT::executeCompute(RenderContext* pRenderContext, const RenderData& 
     // ✅ 每帧重新取 rootVar（轻量）
    // ShaderVar rootVar = mpComputePass->getRootVar();
     rootVar["gVBufferRT"]["roughness"] = mpRoughness;
+    rootVar["gVBufferRT"]["impostorCnt"] = int(mpScene->mImpostors.size());
     rootVar["gPrePosition"] = renderData.getTexture("prePosition");
     rootVar["gPreDirection"] = renderData.getTexture("preDirection");
     rootVar["gPreRoughness"] = renderData.getTexture("preRoughness");
@@ -389,4 +416,16 @@ void VBufferRT::bindShaderData(const ShaderVar& var, const RenderData& renderDat
     };
     for (const auto& channel : kVBufferExtraChannels)
         bind(channel);
+    for (int i = 0; i < mpScene->mImpostors.size(); i++) {
+        var["gAlbedo0"][i] = getOutput(renderData, "uv0_" + std::to_string(i));
+        var["gAlbedo1"][i] = getOutput(renderData, "uv1_" + std::to_string(i));
+        var["gAlbedo2"][i] = getOutput(renderData, "uv2_" + std::to_string(i));
+        var["gDepth0"][i] = getOutput(renderData, "depth0_" + std::to_string(i));
+        var["gDepth1"][i] = getOutput(renderData, "depth1_" + std::to_string(i));
+        var["gDepth2"][i] = getOutput(renderData, "depth2_" + std::to_string(i));
+        var["gDir0"][i] = getOutput(renderData, "direction0_" + std::to_string(i));
+        var["gDir1"][i] = getOutput(renderData, "direction1_" + std::to_string(i));
+        var["gDir2"][i] = getOutput(renderData, "direction2_" + std::to_string(i));
+       
+    }
 }

@@ -574,7 +574,7 @@ def trilinear_mipmap_sample(textures, ranges):
 
     footprint = du * base_res
     lod = torch.log(footprint) / torch.log(torch.tensor(4.0))
-
+    print(lod.max())
     lod = lod.clamp(0, max_level - 1e-6)
 
     l0 = torch.floor(lod).long()
@@ -623,6 +623,78 @@ def trilinear_mipmap_sample(textures, ranges):
     # ---- 4. trilinear blend ----
     out = (1 - w) * out0 + w * out1
     return out
+import random
+def sample_between(v0, v1):
+    """在两个向量/标量之间线性随机"""
+    if isinstance(v0, (int, float)):
+        return random.uniform(v0, v1)
+    return [
+        random.uniform(a, b)
+        for a, b in zip(v0, v1)
+    ]
+
+
+def generate_random_material(config):
+    """
+    根据 config 生成一次随机结果：
+    - 只有一个 key 的 roughness ∈ [0, 0.2]
+    - 其他 key 的 roughness = 1.0
+    """
+    result = {}
+
+    # 随机选择一个 key 作为低 roughness
+    low_rough_key = random.choice(list(config.keys()))
+
+    for key, attrs in config.items():
+        out = {}
+
+        # -------- baseColor --------
+        bc0, bc1 = attrs["baseColor"]
+        out["baseColor"] = sample_between(bc0, bc1)
+
+        # -------- roughness --------
+        if key == low_rough_key:
+            out["roughness"] = random.uniform(0.0, 0.2)
+        else:
+            out["roughness"] = 1.0
+
+        result[key] = out
+
+    return result
+def sample_between_step(v0, v1, step=0.01):
+    """
+    在 [v0, v1] 之间按 step 颗粒度随机采样
+    支持标量 / 向量
+    """
+    def sample_scalar(a, b):
+        ia = int(round(a / step))
+        ib = int(round(b / step))
+        return random.randint(min(ia, ib), max(ia, ib)) * step
+
+    if isinstance(v0, (int, float)):
+        return sample_scalar(v0, v1)
+
+    return [
+        sample_scalar(a, b)
+        for a, b in zip(v0, v1)
+    ]
+def generate_random_material_from_config_step(config, step=0.01):
+    result = {}
+
+    for key, attrs in config.items():
+        out = {}
+
+        # roughness（0.01 粒度）
+        r0, r1 = attrs["roughness"]
+        out["roughness"] = sample_between_step(r0, r1, step)
+
+        # baseColor（同样 0.01 粒度）
+        c0, c1 = attrs["baseColor"]
+        out["baseColor"] = sample_between_step(c0, c1, step)
+
+        result[key] = out
+
+    return result
 if __name__ == "__main__":
     img0 = (np.random.rand(512, 512, 3) * 255).astype(np.uint8)
     img1 = (np.random.rand(512, 512, 3) * 255).astype(np.uint8)
@@ -632,3 +704,5 @@ if __name__ == "__main__":
 
     last = show_5_images_click_single_red_block(img0, img1, img2, img3, img4, block=8)
     print("Last click:", last)
+
+

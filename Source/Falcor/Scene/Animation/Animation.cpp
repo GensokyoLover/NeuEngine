@@ -344,7 +344,7 @@ namespace Falcor
         animation.def_property("interpolationMode", &Animation::getInterpolationMode, &Animation::setInterpolationMode);
         animation.def_property("enableWarping", &Animation::isWarpingEnabled, &Animation::setEnableWarping);
         animation.def(pybind11::init(&Animation::create), "name"_a, "nodeID"_a, "duration"_a);
-        animation.def("addKeyframe", [] (Animation* pAnimation, double time, const Transform& transform) {
+        animation.def("addKeyframe", [] (Animation* pAnimation, double time,  Transform& transform) {
             Animation::Keyframe keyframe{ time, transform.getTranslation(), transform.getScaling(), transform.getRotation() };
             pAnimation->addKeyframe(keyframe);
         });

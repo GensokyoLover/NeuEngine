@@ -230,12 +230,13 @@ namespace Falcor
         struct Node
         {
             Node() = default;
-            Node(const std::string& n, NodeID p, const float4x4& t, const float4x4& mb, const float4x4& l2b) : name(n), parent(p), transform(t), meshBind(mb), localToBindSpace(l2b) {};
+            Node(const std::string& n, NodeID p, const float4x4& t, const float4x4& mb, const float4x4& l2b,const Transform tm) : name(n), parent(p), transform(t), meshBind(mb), localToBindSpace(l2b),tm(tm) {};
             std::string name;
             NodeID parent{ NodeID::Invalid() };
             float4x4 transform;         ///< The node's transformation matrix.
             float4x4 meshBind;          ///< For skinned meshes. Mesh world space transform at bind time.
             float4x4 localToBindSpace;  ///< For bones. Skeleton to bind space transformation. AKA the inverse-bind transform.
+            Transform tm;  ///< For bones. Skeleton to bind space transformation. AKA the inverse-bind transform.
         };
 
         /** Full set of required data to create a scene object.
@@ -301,6 +302,7 @@ namespace Falcor
             std::vector<CustomPrimitiveDesc> customPrimitiveDesc;   ///< Custom primitive descriptors.
             std::vector<AABB> customPrimitiveAABBs;                 ///< List of AABBs for custom primitives in world space. Each custom primitive consists of one AABB.
             std::vector<std::string> ImpostorList;
+            std::vector<std::string> ImpostorNameList;
             std::vector<std::string> texturePath;
             std::vector<std::string> materialName;
             std::vector<std::string> materialSlot;
@@ -489,7 +491,7 @@ namespace Falcor
         */
         const ref<Camera>& getCamera() const override;
         const ref<Impostor>& getImpostor() const override;
-        void addImpostor();
+        void addImpostor(std::string name);
         /** Get the camera bounds
         */
         AABB getCameraBounds() { return mCameraBounds; }
@@ -736,8 +738,10 @@ namespace Falcor
         */
         void updateNodeTransform(uint32_t nodeID, const float4x4& transform);
         void updateNodeTransformPy(uint32_t nodeID, float3 scale, float3 transform,float3 rotation);
+        void updateNodeTransformPyName(std::string name, float3 scale, float3 transform,float3 rotation);
         pybind11::list getSceneGraphPy();
         void updateMaterialRoughness(std::string name, float roughness);
+        void updateMaterialBaseColor(std::string name, float3 baseColor);
 
         /** Get the number of custom primitives.
         */

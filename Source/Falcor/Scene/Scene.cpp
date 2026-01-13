@@ -29,6 +29,7 @@
 #include "SceneDefines.slangh"
 #include "SceneBuilder.h"
 #include "Importer.h"
+#include "Utils/Math/FalcorMath.h"
 #include "Scene/Material/Material.h"
 #include "Scene/Material/SerializedMaterialParams.h"
 #include "Curves/CurveConfig.h"
@@ -1954,6 +1955,17 @@ namespace Falcor
         FALCOR_CHECK(mSceneDefines == mPrevSceneDefines, "Scene defines changed unexpectedly");
 
         mUpdateFlagsSignal(mUpdates);
+        for (int i = 0; i < mImpostors.size(); i++) {
+            std::string nodeName = mImpostors[i]->getName();
+            for (int j = 0; j < mSceneGraph.size(); j++) {
+                if (nodeName == mSceneGraph[j].name) {
+                    mImpostors[i]->worldTransform = mSceneGraph[j].transform;
+                    mImpostors[i]->inverseWorldTransform =inverse(mSceneGraph[j].transform);
+
+                }
+            }
+            
+        }
         return mUpdates;
     }
 
@@ -2143,7 +2155,33 @@ namespace Falcor
                 volumeID++;
             }
         }
-
+        if (auto nodesGroup = widget.group("Transform"))
+        {
+            int nodeID = 0;
+            for (auto& node : mSceneGraph)
+            {
+                auto name = node.name + ": " ;
+                if (auto nodeGroup = nodesGroup.group(name))
+                {
+                    
+                    float3 translation = node.tm.getTranslation();
+                    float3 rotate = node.tm.getRotationEulerDeg();
+                    float3 scale = node.tm.getScaling();
+                    nodeGroup.var("translate", translation);
+                    nodeGroup.var("rotate", rotate,  -180, 180, 1);
+                    nodeGroup.var("scale", scale,float(0.0),float(1.0),float(0.01));
+                    Transform tm;
+                    tm.setTranslation(translation);
+                    tm.setRotationEulerDeg(rotate);
+                    tm.setScaling(scale);
+                    float4x4 mt = tm.getMatrix();
+                    node.tm = tm;
+                    node.transform = mt;
+                    mpAnimationController->setNodeEdited(nodeID);
+                }
+                nodeID++;
+            }
+        }
         if (auto statsGroup = widget.group("Statistics"))
         {
             const auto& s = mSceneStats;
@@ -2400,8 +2438,8 @@ namespace Falcor
         mCameraBounds = aabb;
         mpCamCtrl->setCameraBounds(aabb);
     }
-    void Scene::addImpostor() {
-        ref<Impostor> imp = Impostor::create("imp0");
+    void Scene::addImpostor(std::string name) {
+        ref<Impostor> imp = Impostor::create(name);
         
         mImpostors.push_back(imp);
     }
@@ -4223,6 +4261,163 @@ namespace Falcor
         updateNodeTransform(nodeID, MT);
 
     }
+
+
+
+    void Scene::updateNodeTransformPyName(std::string name, float3 scale, float3 translation, float3 rotationXYZ)
+    {
+        // 按你习惯的顺序组合矩阵：
+        // 一般是 T * S（先缩放再平移）
+        int nodeID = 0;
+        for (auto node : mSceneGraph) {
+            if (node.name == name) {
+                break;
+            }
+            nodeID++;
+        }
+        std::cout << ("update" + name + std::to_string(nodeID)) << std::endl;
+        if (nodeID == mSceneGraph.size()) {
+            return;
+        }
+        Transform transform;
+        transform.setTranslation(translation);
+        transform.setRotationEulerDeg(rotationXYZ);
+        transform.setScaling(scale);
+        
+        // --- 核心修改：定义角度转弧度的常量 ---
+        const float PI = 3.14159265359f;
+        const float DEG2RAD = PI / 180.0f;
+
+        float4x4 S;
+
+        // --- 核心修改：在此处将角度乘以 DEG2RAD ---
+        float rx = rotationXYZ.x * DEG2RAD;   // rotation around X (Input is Degrees)
+        float ry = rotationXYZ.y * DEG2RAD;   // rotation around Y (Input is Degrees)
+        float rz = rotationXYZ.z * DEG2RAD;   // rotation around Z (Input is Degrees)
+
+        float cx = cos(rx), sx = sin(rx);
+        float cy = cos(ry), sy = sin(ry);
+        float cz = cos(rz), sz = sin(rz);
+
+        S[0][0] = scale.x; S[0][1] = 0;       S[0][2] = 0;       S[0][3] = 0;
+        S[1][0] = 0;       S[1][1] = scale.y; S[1][2] = 0;       S[1][3] = 0;
+        S[2][0] = 0;       S[2][1] = 0;       S[2][2] = scale.z; S[2][3] = 0;
+        S[3][0] = 0;       S[3][1] = 0;       S[3][2] = 0;       S[3][3] = 1;
+
+        // ---- 构建平移矩阵 T ----
+        float4x4 T;
+        T[0][0] = 1; T[0][1] = 0; T[0][2] = 0; T[0][3] = 0;
+        T[1][0] = 0; T[1][1] = 1; T[1][2] = 0; T[1][3] = 0;
+        T[2][0] = 0; T[2][1] = 0; T[2][2] = 1; T[2][3] = 0;
+        T[3][0] = translation.x;
+        T[3][1] = translation.y;
+        T[3][2] = translation.z;
+        T[3][3] = 1;
+
+        // ---- Rotation Z ----
+        float4x4 Rz;
+        Rz[0][0] = cz; Rz[0][1] = -sz; Rz[0][2] = 0;  Rz[0][3] = 0;
+        Rz[1][0] = sz; Rz[1][1] = cz;  Rz[1][2] = 0;  Rz[1][3] = 0;
+        Rz[2][0] = 0;  Rz[2][1] = 0;   Rz[2][2] = 1;  Rz[2][3] = 0;
+        Rz[3][0] = 0;  Rz[3][1] = 0;   Rz[3][2] = 0;  Rz[3][3] = 1;
+
+        // ---- Rotation Y ----
+        float4x4 Ry;
+        Ry[0][0] = cy;  Ry[0][1] = 0; Ry[0][2] = sy;  Ry[0][3] = 0;
+        Ry[1][0] = 0;   Ry[1][1] = 1; Ry[1][2] = 0;   Ry[1][3] = 0;
+        Ry[2][0] = -sy; Ry[2][1] = 0; Ry[2][2] = cy;  Ry[2][3] = 0;
+        Ry[3][0] = 0;   Ry[3][1] = 0; Ry[3][2] = 0;   Ry[3][3] = 1;
+
+        // ---- Rotation X ----
+        float4x4 Rx;
+        Rx[0][0] = 1;  Rx[0][1] = 0;   Rx[0][2] = 0;  Rx[0][3] = 0;
+        Rx[1][0] = 0;  Rx[1][1] = cx;  Rx[1][2] = -sx; Rx[1][3] = 0;
+        Rx[2][0] = 0;  Rx[2][1] = sx;  Rx[2][2] = cx; Rx[2][3] = 0;
+        Rx[3][0] = 0;  Rx[3][1] = 0;   Rx[3][2] = 0;  Rx[3][3] = 1;
+
+        // =====================================================
+        // 3) 合成 R = Rz * Ry * Rx（手写矩阵乘法）
+        // =====================================================
+        float4x4 Rzy;
+        for (int i = 0; i < 4; i++)
+        {
+            for (int j = 0; j < 4; j++)
+            {
+                Rzy[i][j] =
+                    Rz[i][0] * Ry[0][j] +
+                    Rz[i][1] * Ry[1][j] +
+                    Rz[i][2] * Ry[2][j] +
+                    Rz[i][3] * Ry[3][j];
+            }
+        }
+
+        float4x4 R;
+        for (int i = 0; i < 4; i++)
+        {
+            for (int j = 0; j < 4; j++)
+            {
+                R[i][j] =
+                    Rzy[i][0] * Rx[0][j] +
+                    Rzy[i][1] * Rx[1][j] +
+                    Rzy[i][2] * Rx[2][j] +
+                    Rzy[i][3] * Rx[3][j];
+            }
+        }
+
+        // =====================================================
+        // 4) 合成 RS = R * S（手写矩阵乘法）
+        // =====================================================
+        float4x4 RS;
+        for (int i = 0; i < 4; i++)
+        {
+            for (int j = 0; j < 4; j++)
+            {
+                RS[i][j] =
+                    R[i][0] * S[0][j] +
+                    R[i][1] * S[1][j] +
+                    R[i][2] * S[2][j] +
+                    R[i][3] * S[3][j];
+            }
+        }
+
+
+        // =====================================================
+        // 6) 最终矩阵 M = T * RS（手写矩阵乘法）
+        // =====================================================
+        float4x4 M;
+        for (int i = 0; i < 4; i++)
+        {
+            for (int j = 0; j < 4; j++)
+            {
+                M[i][j] =
+                    T[i][0] * RS[0][j] +
+                    T[i][1] * RS[1][j] +
+                    T[i][2] * RS[2][j] +
+                    T[i][3] * RS[3][j];
+            }
+        }
+
+        // =====================================================
+        // 7) 手写转置（Falcor float4x4 要 row-major）
+        // =====================================================
+        float4x4 MT;
+        for (int i = 0; i < 4; i++)
+        {
+            for (int j = 0; j < 4; j++)
+            {
+                MT[i][j] = M[j][i];
+            }
+        }
+
+        // =====================================================
+        // 8) 调用已有接口
+        // =====================================================
+        float4x4 t = transform.getMatrix();
+        updateNodeTransform(nodeID, t);
+    }
+
+
+
     namespace py = pybind11;
 
     // 将 Falcor float4x4 -> Python list[list[float]]
@@ -4263,10 +4458,15 @@ namespace Falcor
 
         // ---- 遍历 vector 并 append ----
         int i = 0;
-        for (const auto& n : mSceneGraph)
+        for (const auto& ip : mImpostors)
         {
-            out.append(node_to_dict(n,i));
-            i = i + 1;
+            for (const auto& node : mSceneGraph) {
+                if (node.name == ip->getName()) {
+                    out.append(node_to_dict(node, i));
+                    i = i + 1;
+                    break;
+                }
+            }
         }
 
         return out;
@@ -4276,7 +4476,11 @@ namespace Falcor
         auto iter = static_ref_cast<StandardMaterial>(mpMaterials->getMaterialByName(name));
         iter->setRoughness(roughness);
     }
-
+    void Scene::updateMaterialBaseColor(std::string name, float3 baseColor)
+    {
+        auto iter = static_ref_cast<StandardMaterial>(mpMaterials->getMaterialByName(name));
+        iter->setBaseColor3(baseColor);
+    }
     void Scene::getMeshVerticesAndIndices(MeshID meshID, const std::map<std::string, ref<Buffer>>& buffers)
     {
         if (!mpLoadMeshPass)
@@ -4560,6 +4764,7 @@ namespace Falcor
         scene.def(kGetGridVolume.c_str(), &Scene::getGridVolume, "index"_a);
         scene.def(kGetGridVolume.c_str(), &Scene::getGridVolumeByName, "name"_a);
         scene.def("updateNodeTransform", &Scene::updateNodeTransformPy, "nodeID"_a,"scale"_a,"translation"_a,"rotateXYZ"_a);
+        scene.def("updateNodeTransformName", &Scene::updateNodeTransformPyName, "name"_a,"scale"_a,"translation"_a,"rotateXYZ"_a);
         scene.def("getVolume", &Scene::getGridVolume, "index"_a); // PYTHONDEPRECATED
         scene.def("getVolume", &Scene::getGridVolumeByName, "name"_a); // PYTHONDEPRECATED
         scene.def(kSetCameraBounds.c_str(), [](Scene* pScene, const float3& minPoint, const float3& maxPoint) {
@@ -4575,6 +4780,7 @@ namespace Falcor
         scene.def("get_material", &Scene::getMaterial, "index"_a);
         scene.def("get_material", &Scene::getMaterialByName, "name"_a);
         scene.def("set_roughness", &Scene::updateMaterialRoughness, "name"_a,"roughness"_a);
+        scene.def("set_basecolor", &Scene::updateMaterialBaseColor, "name"_a,"baseColor"_a);
         scene.def("setMaterialSlotByTexturePath", &Scene::setMaterialSlotByTexturePath, "name"_a,"path"_a,"slot_name"_a);
         scene.def("addMaterial", &Scene::addMaterial, "material"_a);
         scene.def("getGeometryIDsForMaterial", [](const Scene* scene, const ref<Material>& pMaterial)

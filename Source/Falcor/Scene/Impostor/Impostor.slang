@@ -22,34 +22,65 @@ static const float2 gTileSizeNorm[4] = {
     float2(1.0f / 26.0f, 1.0f / 25.0f), // Level 2: 26 Cols, 25 Rows
     float2(1.0f / 51.0f, 1.0f / 51.0f)  // Level 3: 51 Cols, 51 Rows
 };
+
 struct Impostor
 {
-    // impostor 纹理（多视角合并）
-    
-
-    Texture2DArray<float4> texNormalArray[2];
-    Texture2D<float4> texDepthAtlas[5];
+    // ... 纹理和 Buffer 资源部分保持不变 ...
     Texture2DArray<float4> texDepthArray[10];
-    Texture2D<float4> texAlbedoAtlas;
     Texture2D<uint> texFaceIndex[5];
     SamplerState samplerLinear[5];
     SamplerState samplerPoint[5];
 
-    // 每个视角的相机方向和up方向
     StructuredBuffer<float3> cForward[5];
     StructuredBuffer<float3> cUp[5];
     StructuredBuffer<float3> cRight[5];
     StructuredBuffer<float3> cPosition[5];
     StructuredBuffer<int3> cFace[5];
     StructuredBuffer<float> cRadius[5];
-    uint level[5];     // subdivision level
-    float3 centerWS[5]; // impostor中心在世界空间的位置
-    float radius[5];
-    uint2 texDim[5];
-    float2 invTexDim[5];
-    uint baseCameraResolution[5];
 
+    // --- ⬇️ 这里必须改 (使用向量类型) ⬇️ ---
+
+
+    uint4 levels; // ✅ 安全：占用 16 字节，用 levels.x, levels.y 访问
+
+
+    float4 centerWS[4]; // ✅ 安全：xyz存位置，w可存其他或留空
+
+    uint4 baseCameraResolution; // ✅ 安全
+
+    float4x4 worldTransform;
+    float4x4 inverseWorldTransform;
 };
+
+// struct Impostor
+// {
+//     // impostor 纹理（多视角合并）
+    
+
+
+//     Texture2DArray<float4> texDepthArray[10];
+//     Texture2D<uint> texFaceIndex[5];
+//     SamplerState samplerLinear[5];
+//     SamplerState samplerPoint[5];
+
+//     // 每个视角的相机方向和up方向
+//     StructuredBuffer<float3> cForward[5];
+//     StructuredBuffer<float3> cUp[5];
+//     StructuredBuffer<float3> cRight[5];
+//     StructuredBuffer<float3> cPosition[5];
+//     StructuredBuffer<int3> cFace[5];
+//     StructuredBuffer<float> cRadius[5];
+//     uint level[4];     // subdivision level
+//     float3 centerWS[4]; // impostor中心在世界空间的位置
+//     float radius[4];
+//     uint2 texDim[4];
+
+//     uint baseCameraResolution[4];
+//     float4x4 worldTransform;
+//     float4x4 inverseWorldTransform;
+    
+
+// };
 float4 SampleImpostorPoint(
     Texture2DArray<float4> texArray[],
     SamplerState samplerPoint,

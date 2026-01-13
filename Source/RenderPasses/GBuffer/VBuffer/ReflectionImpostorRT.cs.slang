@@ -46,46 +46,136 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID)
     uint2 pixel = dispatchThreadId.xy;
     if (any(pixel >= gVBufferRT.frameDim))
         return;
-
     const Ray ray = gVBufferRT.generateRay(pixel);
     uint r = int(gPreRoughness[pixel].r * 100);
     float depth_tanh = half_tan[r];
     float half_deg = deg[r];
-    gDepth0[pixel] = float4(0);
-    gDepth1[pixel] = float4(0);
-    gDepth2[pixel] = float4(0);
-    gDir0[pixel] = float4(0);
-    gDir1[pixel] = float4(0);
-    gDir2[pixel] = float4(0);
-    gAlbedo0[pixel] = float4(0);
-    gAlbedo1[pixel] = float4(0);
-    gAlbedo2[pixel] = float4(0);
-    float miDepth = 1000;
-    if (any(gPrePosition[pixel].xyz != float3(0, 0, 0)) || any(gPreDirection[pixel].xyz != float3(0, 0, 0))) {
-        float4 result4 = gVBufferRT.sampleImpostorSingleViewLevel( pixel, gVBufferRT.gImpostor, gPreDirection[pixel].xyz, gPrePosition[pixel].xyz, 0, depth_tanh );
-        //float4 result4 =float4(4);
-        gVBufferRT.writeAux(pixel, result4);
-    }
-    else {
- 
-        gVBufferRT.writeAux(pixel, float4(0,0,0,0));
-    }
-    //gVBufferRT.writeDebug(pixel, float4(float(endlevel)/3));
-    //gVBufferRT.writeAux(pixel, depth_tanh/100.0);
-
     
-    // SceneRayQuery<VBufferRT::kUseAlphaTest> sceneRayQuery;
-    // float hitT;
-    // const HitInfo hit = sceneRayQuery.traceRay(ray, hitT, VBufferRT::kRayFlags);
-    // if (hit.isValid())
-    // {
-    //     gVBufferRT.writeHit(pixel, ray.origin, ray.dir, hit);
-    // }
-    // else
-    // {
-    //     gVBufferRT.writeMiss(pixel, ray.origin, ray.dir);
-    // }
 
+    for (int i = 0; i < gVBufferRT.impostorCnt; i++) {
+        uint idx = NonUniformResourceIndex(i);
+        gDepth0[idx][pixel] = float4(0);
+        gDepth1[idx][pixel] = float4(0);
+        gDepth2[idx][pixel] = float4(0);
+        gDir0[idx][pixel] = float4(0);
+        gDir1[idx][pixel] = float4(0);
+        gDir2[idx][pixel] = float4(0);
+        gAlbedo0[idx][pixel] = float4(0);
+        gAlbedo1[idx][pixel] = float4(0);
+        gAlbedo2[idx][pixel] = float4(0);
+        if (idx == 0) {
+            float4x4 invM = gVBufferRT.gImpostor0.inverseWorldTransform;
+            float3 rayPos_local = mul(invM, float4(gPrePosition[pixel].xyz, 1.0)).xyz;
+            float3 rayDirL_raw = mul((float3x3)invM, gPreDirection[pixel].xyz);
+            float4 result4 = gVBufferRT.sampleImpostorSingleViewLevel(
+        pixel, gVBufferRT.gImpostor0, rayDirL_raw, rayPos_local, 0, depth_tanh, idx);
+        }
+        else if (idx == 1) {
+            float4x4 invM = gVBufferRT.gImpostor1.inverseWorldTransform;
+            float3 rayPos_local = mul(invM, float4(gPrePosition[pixel].xyz, 1.0)).xyz;
+            float3 rayDirL_raw = mul((float3x3)invM, gPreDirection[pixel].xyz);
+            float4 result4 = gVBufferRT.sampleImpostorSingleViewLevel(
+        pixel, gVBufferRT.gImpostor1, rayDirL_raw, rayPos_local, 0, depth_tanh, idx);
+        }
+        else if (idx == 2) {
+            float4x4 invM = gVBufferRT.gImpostor2.inverseWorldTransform;
+            float3 rayPos_local = mul(invM, float4(gPrePosition[pixel].xyz, 1.0)).xyz;
+            float3 rayDirL_raw = mul((float3x3)invM, gPreDirection[pixel].xyz);
+            float4 result4 = gVBufferRT.sampleImpostorSingleViewLevel(
+        pixel, gVBufferRT.gImpostor2, rayDirL_raw, rayPos_local, 0, depth_tanh, idx);
+        }
+        else if (idx == 3) {
+            float4x4 invM = gVBufferRT.gImpostor3.inverseWorldTransform;
+            float3 rayPos_local = mul(invM, float4(gPrePosition[pixel].xyz, 1.0)).xyz;
+            float3 rayDirL_raw = mul((float3x3)invM, gPreDirection[pixel].xyz);
+            float4 result4 = gVBufferRT.sampleImpostorSingleViewLevel(
+        pixel, gVBufferRT.gImpostor3, rayDirL_raw, rayPos_local, 0, depth_tanh, idx);
+        }
+        else if (idx == 4) {
+            float4x4 invM = gVBufferRT.gImpostor4.inverseWorldTransform;
+            float3 rayPos_local = mul(invM, float4(gPrePosition[pixel].xyz, 1.0)).xyz;
+            float3 rayDirL_raw = mul((float3x3)invM, gPreDirection[pixel].xyz);
+            float4 result4 = gVBufferRT.sampleImpostorSingleViewLevel(
+        pixel, gVBufferRT.gImpostor4, rayDirL_raw, rayPos_local, 0, depth_tanh, idx);
+        }
+        else if (idx == 5) {
+            float4x4 invM = gVBufferRT.gImpostor5.inverseWorldTransform;
+            float3 rayPos_local = mul(invM, float4(gPrePosition[pixel].xyz, 1.0)).xyz;
+            float3 rayDirL_raw = mul((float3x3)invM, gPreDirection[pixel].xyz);
+            float4 result4 = gVBufferRT.sampleImpostorSingleViewLevel(
+        pixel, gVBufferRT.gImpostor5, rayDirL_raw, rayPos_local, 0, depth_tanh, idx);
+        }
+        else if (idx == 6) {
+            float4x4 invM = gVBufferRT.gImpostor6.inverseWorldTransform;
+            float3 rayPos_local = mul(invM, float4(gPrePosition[pixel].xyz, 1.0)).xyz;
+            float3 rayDirL_raw = mul((float3x3)invM, gPreDirection[pixel].xyz);
+            float4 result4 = gVBufferRT.sampleImpostorSingleViewLevel(
+        pixel, gVBufferRT.gImpostor6, rayDirL_raw, rayPos_local, 0, depth_tanh, idx);
+        }
+        else if (idx == 7) {
+            float4x4 invM = gVBufferRT.gImpostor7.inverseWorldTransform;
+            float3 rayPos_local = mul(invM, float4(gPrePosition[pixel].xyz, 1.0)).xyz;
+            float3 rayDirL_raw = mul((float3x3)invM, gPreDirection[pixel].xyz);
+            float4 result4 = gVBufferRT.sampleImpostorSingleViewLevel(
+        pixel, gVBufferRT.gImpostor7, rayDirL_raw, rayPos_local, 0, depth_tanh, idx);
+        }
+        else if (idx == 8) {
+            float4x4 invM = gVBufferRT.gImpostor8.inverseWorldTransform;
+            float3 rayPos_local = mul(invM, float4(gPrePosition[pixel].xyz, 1.0)).xyz;
+            float3 rayDirL_raw = mul((float3x3)invM, gPreDirection[pixel].xyz);
+            float4 result4 = gVBufferRT.sampleImpostorSingleViewLevel(
+        pixel, gVBufferRT.gImpostor8, rayDirL_raw, rayPos_local, 0, depth_tanh, idx);
+        }
+        else if (idx == 9) {
+            float4x4 invM = gVBufferRT.gImpostor9.inverseWorldTransform;
+            float3 rayPos_local = mul(invM, float4(gPrePosition[pixel].xyz, 1.0)).xyz;
+            float3 rayDirL_raw = mul((float3x3)invM, gPreDirection[pixel].xyz);
+            float4 result4 = gVBufferRT.sampleImpostorSingleViewLevel(
+        pixel, gVBufferRT.gImpostor9, rayDirL_raw, rayPos_local, 0, depth_tanh, idx);
+        }
+        else if (idx == 10) {
+            float4x4 invM = gVBufferRT.gImpostor10.inverseWorldTransform;
+            float3 rayPos_local = mul(invM, float4(gPrePosition[pixel].xyz, 1.0)).xyz;
+            float3 rayDirL_raw = mul((float3x3)invM, gPreDirection[pixel].xyz);
+            float4 result4 = gVBufferRT.sampleImpostorSingleViewLevel(
+        pixel, gVBufferRT.gImpostor10, rayDirL_raw, rayPos_local, 0, depth_tanh, idx);
+        }
+    }
+    // for (int idx = 0; idx < gVBufferRT.impostorCnt; idx++) {
+    //     float4x4 invM;
+    //     float3 rayPos_local;
+    //     float3 rayDirL_raw;
+    //     float4 result4;
 
-    //gVBufferRT.endTime(pixel, timer);
+    //     // 根据 idx 的值选择相应的 impostor
+    //     invM = (idx == 0)   ? gVBufferRT.gImpostor0.inverseWorldTransform :
+    //       (idx == 1) ? gVBufferRT.gImpostor1.inverseWorldTransform :
+    //       (idx == 2) ? gVBufferRT.gImpostor2.inverseWorldTransform :
+    //       (idx == 3) ? gVBufferRT.gImpostor3.inverseWorldTransform :
+    //       (idx == 4) ? gVBufferRT.gImpostor4.inverseWorldTransform :
+    //       (idx == 5) ? gVBufferRT.gImpostor5.inverseWorldTransform :
+    //       (idx == 6) ? gVBufferRT.gImpostor6.inverseWorldTransform :
+    //       (idx == 7) ? gVBufferRT.gImpostor7.inverseWorldTransform :
+    //       (idx == 8) ? gVBufferRT.gImpostor8.inverseWorldTransform :
+    //       (idx == 9) ? gVBufferRT.gImpostor9.inverseWorldTransform :
+    //       gVBufferRT.gImpostor10.inverseWorldTransform;
+
+    //     rayPos_local = mul(invM, float4(gPrePosition[pixel].xyz, 1.0)).xyz;
+    //     rayDirL_raw = mul((float3x3)invM, gPreDirection[pixel].xyz);
+
+    //     // 使用对应的 gImpostor 进行采样
+    //     result4 = gVBufferRT.sampleImpostorSingleViewLevel( pixel,
+    //         (idx == 0)   ? gVBufferRT.gImpostor0 : 
+    //           (idx == 1) ? gVBufferRT.gImpostor1 : 
+    //           (idx == 2) ? gVBufferRT.gImpostor2 : 
+    //           (idx == 3) ? gVBufferRT.gImpostor3 : 
+    //           (idx == 4) ? gVBufferRT.gImpostor4 : 
+    //           (idx == 5) ? gVBufferRT.gImpostor5 : 
+    //           (idx == 6) ? gVBufferRT.gImpostor6 : 
+    //           (idx == 7) ? gVBufferRT.gImpostor7 : 
+    //           (idx == 8) ? gVBufferRT.gImpostor8 : 
+    //           (idx == 9) ? gVBufferRT.gImpostor9 : 
+    //           gVBufferRT.gImpostor10,
+    //         rayDirL_raw, rayPos_local, 0, depth_tanh, idx );
+    // }
 }

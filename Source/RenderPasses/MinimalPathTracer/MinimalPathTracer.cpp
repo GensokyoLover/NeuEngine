@@ -40,7 +40,7 @@ const char kShaderFile[] = "RenderPasses/MinimalPathTracer/MinimalPathTracer.rt.
 
 // Ray tracing settings that affect the traversal stack size.
 // These should be set as small as possible.
-const uint32_t kMaxPayloadSizeBytes = 72u;
+const uint32_t kMaxPayloadSizeBytes = 92u;
 const uint32_t kMaxRecursionDepth = 2u;
 
 const char kInputViewDir[] = "viewW";
@@ -333,7 +333,7 @@ void MinimalPathTracer::prepareVars()
     // This may trigger shader compilation. If it fails, throw an exception to abort rendering.
     mTracer.pVars = RtProgramVars::create(mpDevice, mTracer.pProgram, mTracer.pBindingTable);
 
-    // Bind utility classes into shared data.
+    // Bind utility classes into shared data.pa
     auto var = mTracer.pVars->getRootVar();
     mpSampleGenerator->bindShaderData(var);
 }

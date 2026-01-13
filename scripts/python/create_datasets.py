@@ -1,13 +1,27 @@
 import sys
 import os
+import platform
 
+os_name = platform.system()
+falcor_python_dir = None
+if os_name == "Windows":
+    falcor_dir = r"H:/Falcor\\build\\windows-vs2022\\bin\\Debug"  # Double \\ for raw string
+    os.environ["PATH"] = falcor_dir + ";" + os.environ.get("PATH", "")
+    falcor_python_dir = falcor_dir + r"\python"
+else:  # Linux
+    falcor_dir = r"/seaweedfs_tmp/training/wangjiu/new/NeuEngine/build/linux-clang/bin/Debug"
+    os.environ["PATH"] = falcor_dir + ":" + os.environ.get("PATH", "")
+    os.environ["LD_LIBRARY_PATH"] = falcor_dir + ":" + os.environ.get("LD_LIBRARY_PATH", "")
+    falcor_python_dir = falcor_dir + "/python"
 
-os.environ["PATH"]      = r"H:/Falcor\build\windows-vs2022\bin\Debug" + os.environ["PATH"]
-sys.path.append( r"H:/Falcor\build\windows-vs2022\bin\Debug/python")
+# Prepend for higher priority (better than append)
+sys.path.insert(0, falcor_python_dir)
+
 import falcor
 import numpy as np
 from impostor import *
 from futils import f3_to_numpy
+
 def setup_renderpass(testbed):
     render_graph = testbed.create_render_graph("PathTracer")
     render_graph.create_pass("PathTracer", "PathTracer", {'samplesPerPixel': 1})
@@ -60,12 +74,13 @@ def render_graph_ImpostorTracer(testbed):
     g.markOutput("ImpostorTracer.depth")
     g.markOutput("AccumulatePass.output")
     testbed.render_graph = g
-def render_graph_MinimalPathTracer(testbed):
+def render_graph_MinimalPathTracer(testbed,impostor_cnt):
     g = testbed.create_render_graph("MinimalPathTracer")
     g.create_pass("AccumulatePass", "AccumulatePass",{'enabled': True, 'precisionMode': 'Single'})
+    g.create_pass("AccumulatePass2", "AccumulatePass",{'enabled': True, 'precisionMode': 'Single'})
     
     g.create_pass("ToneMapper", "ToneMapper",{'autoExposure': False, 'exposureCompensation': 0.0})
-    g.create_pass("MinimalPathTracer","MinimalPathTracer", {'maxBounces': 0})
+    g.create_pass("MinimalPathTracer","MinimalPathTracer", {'maxBounces': 6})
     
     g.create_pass("VBufferRT","VBufferRT", {'samplePattern': 'Stratified', 'sampleCount': 16,"useTraceRayInline":False})
     #g.create_pass("AccumulatePass2", "AccumulatePass",{'enabled': True, 'precisionMode': 'Single'})
@@ -76,6 +91,7 @@ def render_graph_MinimalPathTracer(testbed):
     
     g.addEdge("VBufferRT.viewW", "MinimalPathTracer.viewW")
     g.addEdge("MinimalPathTracer.color", "AccumulatePass.input")
+    g.addEdge("MinimalPathTracer.type", "AccumulatePass2.input")
     #g.addEdge("VBufferRT.vbuffer", "MinimalPathTracer2.vbuffer")
     # g.addEdge("VBufferRT.viewW", "MinimalPathTracer2.viewW")
     g.addEdge("MinimalPathTracer.position", "VBufferRT2.prePosition")
@@ -95,15 +111,18 @@ def render_graph_MinimalPathTracer(testbed):
     g.markOutput("MinimalPathTracer.raypos")
     g.markOutput("MinimalPathTracer.mind")
     g.markOutput("MinimalPathTracer.reflect")
-    g.markOutput("VBufferRT2.depth0")
-    g.markOutput("VBufferRT2.depth1")
-    g.markOutput("VBufferRT2.depth2")
-    g.markOutput("VBufferRT2.direction0")
-    g.markOutput("VBufferRT2.direction1")
-    g.markOutput("VBufferRT2.direction2")
-    g.markOutput("VBufferRT2.uv0")
-    g.markOutput("VBufferRT2.uv1")
-    g.markOutput("VBufferRT2.uv2")
+    g.markOutput("AccumulatePass2.output")
+    for i in range(impostor_cnt):
+        g.markOutput("VBufferRT2.uv0_{}".format(i))
+        g.markOutput("VBufferRT2.uv1_{}".format(i))
+        g.markOutput("VBufferRT2.uv2_{}".format(i))
+        g.markOutput("VBufferRT2.direction0_{}".format(i))
+        g.markOutput("VBufferRT2.direction1_{}".format(i))
+        g.markOutput("VBufferRT2.direction2_{}".format(i))
+        g.markOutput("VBufferRT2.depth0_{}".format(i))
+        g.markOutput("VBufferRT2.depth1_{}".format(i))
+        g.markOutput("VBufferRT2.depth2_{}".format(i))
+
     testbed.render_graph = g
 def render_graph_MinimalPathTracer_Debug(testbed):
     g = testbed.create_render_graph("MinimalPathTracer")
@@ -150,27 +169,38 @@ import pickle
 import zstandard as zstd
 
 def save_compressed_pickle(data, file_path):
-    # 将数据序列化为 pickle 格式
     pickled_data = pickle.dumps(data, pickle.HIGHEST_PROTOCOL)
-
-    # 创建 zstd 压缩器
     cctx = zstd.ZstdCompressor()
 
     # 压缩数据
     compressed_data = cctx.compress(pickled_data)
-    #print(file_path)
-    # 将压缩后的数据写入文件
     with open(file_path, 'wb') as f:
         f.write(compressed_data)
 
 
-object_data_list = ["color","position","albedo","specular","normal","roughness","depth","emission","AccumulatePassoutput","view","raypos","mind","reflect","idepth0","idepth1","idepth2","idirection0","idirection1","idirection2","uv0","uv1","uv2"]
-#object_data_list = ["idepth0","idepth1","idepth2","idirection0","idirection1","idirection2"]
+object_data_list = ["color","position","albedo","specular","normal","roughness","depth","emission","AccumulatePassoutput","view","raypos","mind","reflect","AccumulatePassoutput2"]
+for i in range(5):
+    object_data_list.append("uv0_{}".format(i))
+    object_data_list.append("uv1_{}".format(i))
+    object_data_list.append("uv2_{}".format(i))
+    object_data_list.append("direction0_{}".format(i))
+    object_data_list.append("direction1_{}".format(i))
+    object_data_list.append("direction2_{}".format(i))
+    object_data_list.append("depth0_{}".format(i))
+    object_data_list.append("depth1_{}".format(i))
+    object_data_list.append("depth2_{}".format(i))
 object_key_dict = {name: i for i, name in enumerate(object_data_list)}
-sellect_list = ["albedo","specular","normal","position","view","AccumulatePassoutput","roughness","raypos","depth","emission","mind","reflect","idepth0","idepth1","idepth2","idirection0","idirection1","idirection2","uv0","uv1","uv2"]
-#sellect_list = ["albedo","specular","normal","position","view","AccumulatePassoutput","roughness","raypos","depth","emission","mind","reflect"]
-#sellect_list = ["idepth0","idepth1","idepth2","idirection0","idirection1","idirection2"]
-#object_data_list = ["color","position","albedo","specular","normal","roughness","depth","AccumulatePassoutput"]
+sellect_list = ["albedo","specular","normal","position","view","AccumulatePassoutput","roughness","raypos","depth","emission","mind","reflect","AccumulatePassoutput2"]
+for i in range(5):
+    sellect_list.append("uv0_{}".format(i))
+    sellect_list.append("uv1_{}".format(i))
+    sellect_list.append("uv2_{}".format(i))
+    sellect_list.append("direction0_{}".format(i))
+    sellect_list.append("direction1_{}".format(i))
+    sellect_list.append("direction2_{}".format(i))
+    sellect_list.append("depth0_{}".format(i))
+    sellect_list.append("depth1_{}".format(i))
+    sellect_list.append("depth2_{}".format(i))
 def pack_object_data(path,camera_resolution,direction_resolution):
     data = {}
     for name in object_data_list:
@@ -182,6 +212,8 @@ import os
 import pyexr
 import numpy as np
 import random
+
+
 def _uniform_step01(a: float, b: float) -> float:
     """
     在 [a, b] 上以 0.01 为最小步长均匀采样（包含端点，若端点不在 0.01 网格上会自动对齐）。
@@ -192,50 +224,324 @@ def _uniform_step01(a: float, b: float) -> float:
         raise ValueError(f"Invalid range after 0.01-quantization: [{a}, {b}]")
     return random.randint(lo, hi) / 100.0
 
-# def sample_roughness() -> float:
-#     p = random.random()
-#     if p < 0.2:
-#         return _uniform_step01(0.07, 0.10)
-#     elif p < 0.4:
-#         return _uniform_step01(0.10, 0.20)
-#     elif p < 0.6:
-#         return _uniform_step01(0.20, 0.40)
-#     elif p < 0.8:
-#         return _uniform_step01(0.40, 0.60)
-#     else:
-#         return _uniform_step01(0.60, 1.00)
 
 def sample_roughness() -> float:
 
     return _uniform_step01(0.01, 0.15)
 
 import multiprocessing as mp
-def worker_process(worker_id, resolution, scene_path,
+
+def save_pyscene_with_worker_id(src_path, worker_id, appended_commands):
+    """
+    src_path: 原始 .pyscene 路径，例如 "scene/xxx.pyscene"
+    worker_id: int 或 str
+    appended_commands: 要追加的字符串
+    """
+
+    base, ext = os.path.splitext(src_path)
+    assert ext == ".pyscene"
+
+    dst_path = f"{base}_worker{worker_id}{ext}"
+
+    # 1. 读取源文件
+    with open(src_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    # 2. 拼接新内容
+    new_content = (
+        content.rstrip() + "\n\n"
+        f"# ==== AUTO GENERATED FOR WORKER {worker_id} ====\n"
+        + appended_commands.strip() + "\n"
+    )
+
+    # 3. 写入新文件
+    with open(dst_path, "w", encoding="utf-8") as f:
+        f.write(new_content)
+
+    return dst_path
+import textwrap
+
+def make_light_cmd(texture_name):
+    IMPOSTOR_TEMPLATE = textwrap.dedent("""\
+lightMesh = TriangleMesh()
+
+normal = float3(0, 1, 0)
+
+# 四个角
+lightMesh.addVertex(float3(-0.7071, 0,  0.7071), normal, float2(0, 0))
+lightMesh.addVertex(float3( 0.7071, 0,  0.7071), normal, float2(1, 0))
+lightMesh.addVertex(float3( 0.7071, 0, -0.7071), normal, float2(1, 1))
+lightMesh.addVertex(float3(-0.7071, 0, -0.7071), normal, float2(0, 1))
+
+# 两个三角形
+lightMesh.addTriangle(0, 1, 2)
+lightMesh.addTriangle(0, 2, 3)
+
+
+light = StandardMaterial('Light')
+light.baseColor = float4(0)
+light.emissiveColor = float3(0, 0, 0)
+light.emissiveFactor = 1
+light.roughness = 1
+light.metallic = 1
+sceneBuilder.addMeshInstance(
+    sceneBuilder.addNode('Light', Transform(scaling=1.0, translation=float3(0, 0.0, 0.0), rotationEulerDeg=float3(0, 0, 0))),
+    sceneBuilder.addTriangleMesh(lightMesh, light)
+)
+sceneBuilder.addTextureSlot("Light",r"H:\Falcor\emissive_crop\\{texture_name}","Emissive")
+""")
+    cmd = IMPOSTOR_TEMPLATE.format(
+        texture_name = texture_name
+    )
+    return cmd
+def make_cmd(name,mesh_path,impostor_path,emissive,translation,rotate,scale,roughness):
+    IMPOSTOR_TEMPLATE = textwrap.dedent("""\
+{obj_name} = StandardMaterial('{obj_name}')
+{obj_name}.baseColor = float4(1.0, 1.0, 1.0, 1.0)
+{obj_name}.emissiveColor = float3({emi_r}, {emi_g}, {emi_b})
+{obj_name}.emissiveFactor = 1.0
+{obj_name}.metallic = 1.0
+{obj_name}.roughness = {roughness}
+
+flags = TriangleMeshImportFlags.GenSmoothNormals | TriangleMeshImportFlags.JoinIdenticalVertices
+{obj_name}Mesh = TriangleMesh.createFromFile(
+    r'{mesh_path}',
+    flags
+)
+
+sceneBuilder.addMeshInstance(
+    sceneBuilder.addNode(
+        '{obj_name}',
+        Transform(
+            translation=float3({tx}, {ty}, {tz}),
+            rotationEulerDeg=float3({rx}, {ry}, {rz}),
+            scaling={scale}
+        )
+    ),
+    sceneBuilder.addTriangleMesh({obj_name}Mesh, {obj_name}, True)
+)
+
+sceneBuilder.addImpostor(
+    r'{impostor_path}',
+    r'{obj_name}'
+)
+""")
+    cmd = IMPOSTOR_TEMPLATE.format(
+        obj_name=name,
+        emi_r=emissive[0], emi_g=emissive[1], emi_b=emissive[2],
+
+        mesh_path=mesh_path,
+        impostor_path=impostor_path,
+
+        tx=translation[0], ty=translation[1], tz=translation[2],
+        rx=rotate[0], ry=rotate[1], rz=rotate[2],
+        scale=scale,
+        roughness = roughness
+    )
+    return cmd
+import trimesh
+
+def sample_edge_biased(min_v, max_v, power=3.0):
+    """
+    power > 1  → 越大越靠近边缘
+    power = 1  → 均匀分布
+    """
+    u = random.random()          # [0,1]
+    sign = -1 if random.random() < 0.5 else 1
+    x = sign * (u ** (1.0 / power))  # 偏向 ±1
+    return 0.5 * (max_v + min_v) + 0.5 * (max_v - min_v) * x
+
+
+# 辅助函数：检测两个 AABB 是否相交
+def check_aabb_intersection(min_a, max_a, min_b, max_b):
+    # 如果在任何一个轴上不重叠，则整体不相交
+    if (max_a[0] < min_b[0] or min_a[0] > max_b[0]): return False
+    if (max_a[1] < min_b[1] or min_a[1] > max_b[1]): return False
+    if (max_a[2] < min_b[2] or min_a[2] > max_b[2]): return False
+    return True
+
+# 辅助函数：根据变换计算新的世界空间 AABB
+# 比 transform 整个 mesh 快得多，只变换 8 个顶点
+def get_transformed_aabb(mesh_min, mesh_max, scale_val, rotation_deg_y, translation):
+    # 1. 构建局部空间的 8 个角点
+    corners = np.array([
+        [mesh_min[0], mesh_min[1], mesh_min[2]],
+        [mesh_min[0], mesh_min[1], mesh_max[2]],
+        [mesh_min[0], mesh_max[1], mesh_min[2]],
+        [mesh_min[0], mesh_max[1], mesh_max[2]],
+        [mesh_max[0], mesh_min[1], mesh_min[2]],
+        [mesh_max[0], mesh_min[1], mesh_max[2]],
+        [mesh_max[0], mesh_max[1], mesh_min[2]],
+        [mesh_max[0], mesh_max[1], mesh_max[2]],
+    ])
+
+    # 2. 应用缩放 (Scale)
+    corners = corners * scale_val
+
+    # 3. 应用旋转 (Rotation - 绕Y轴)
+    # 将角度转弧度
+    rad = np.radians(rotation_deg_y)
+    cos_a, sin_a = np.cos(rad), np.sin(rad)
+    # Y轴旋转矩阵
+    R = np.array([
+        [cos_a,  0, sin_a],
+        [0,      1, 0],
+        [-sin_a, 0, cos_a]
+    ])
+    corners = np.dot(corners, R.T) # 矩阵乘法
+
+    # 4. 应用平移 (Translation)
+    corners = corners + np.array(translation)
+
+    # 5. 获取新的 AABB
+    new_min = np.min(corners, axis=0)
+    new_max = np.max(corners, axis=0)
+    return new_min, new_max
+
+# --- 主逻辑开始 ---
+
+# 用于存储已放置物体的 AABB [(min, max), (min, max), ...]
+
+def generate_scene_data(impostor_list, model_path_fmt, max_attempts=100):
+    """
+    生成不重叠的物体变换和 Emissive 数据
+    
+    Returns:
+        list[dict]: 包含每个物体 name, translate, scale, rotate, emissive 的字典列表
+    """
+    scene_data = []
+    placed_aabbs = [] # 记录已放置物体的 AABB [(min, max), ...]
+
+    for name in impostor_list:
+        mp = model_path_fmt.format(name)
+        
+        # 加载 Mesh 获取原始包围盒 (这是碰撞检测必须的)
+        try:
+            mesh = trimesh.load(mp, force='mesh')
+        except Exception as e:
+            print(f"Error loading mesh {mp}: {e}")
+            continue
+
+        raw_aabb_min, raw_aabb_max = mesh.bounds
+        success = False
+
+        # 尝试生成无碰撞的变换
+        for attempt in range(max_attempts):
+            # 1. 随机参数
+            scale = random.uniform(0.1, 0.4)
+            emissive = np.random.uniform(0.2, 1, [3]) # 生成随机自发光颜色
+            
+            # 注意: 这里的 sample_edge_biased 需确保在上下文可见
+            translate_vec = [
+                sample_edge_biased(-0.707 + raw_aabb_max[0] * scale, 0.707 - raw_aabb_max[0] * scale, power=3.0),
+                sample_edge_biased(-0.707 + raw_aabb_max[1] * scale, -0.707 + raw_aabb_max[1] * scale, power=3.0),
+                sample_edge_biased(-0.707 + raw_aabb_max[2] * scale, 0.707 - raw_aabb_max[2] * scale, power=3.0)
+            ]
+            
+            rot_y = random.uniform(0, 180)
+            rotate_vec = [0, rot_y, 0]
+
+            # 2. 计算新 AABB 并检测碰撞
+            current_min, current_max = get_transformed_aabb(
+                raw_aabb_min, raw_aabb_max, scale, rot_y, translate_vec
+            )
+
+            collision = False
+            for (existing_min, existing_max) in placed_aabbs:
+                if check_aabb_intersection(current_min, current_max, existing_min, existing_max):
+                    collision = True
+                    break
+            
+            # 3. 无碰撞则保存数据
+            if not collision:
+                placed_aabbs.append((current_min, current_max))
+                
+                # 构建纯数据字典
+                obj_data = {
+                    "name": name,
+                    "translate": np.array(translate_vec),
+                    "scale": np.array([scale, scale, scale]),
+                    "rotate": np.array(rotate_vec),
+                    "emissive": emissive
+                }
+                scene_data.append(obj_data)
+                
+                success = True
+                break 
+
+        if not success:
+            print(f"Warning: Skipped {name} (overlap detected).")
+
+    return scene_data
+
+def worker_process(worker_id, resolution, scene_name,
                    object_data_dict, select_list,
-                   task_queue: mp.Queue,result_queue: mp.Queue):
+                   task_queue: mp.Queue,result_queue: mp.Queue,impostor_list:list,emissive_list:list):
     """
     Worker 常驻进程：保持一个 Testbed 实例
     """
     print(f"[Worker {worker_id}] Initializing testbed...")
-
+    
+    os_name = platform.system()
+    if os_name == "Windows":
+        scene_path = r"H:\Falcor\scenes\scene/{}.pyscene".format(scene_name)
+        model_path =r"H:\Falcor/model/{}.obj"
+        impostor_path =r"H:\Falcor/datasets/impostor/{}/level1/"
+        config_path =r"H:\Falcor\configs/{}.json".format(scene_name)
+        emissive_path = r"H:\Falcor\emissive_crop\\{}"
+    with open(config_path,'r') as f:
+        configs = json.load(f)
     # 只有 worker 进程初始化 Falcor
     device = falcor.Device(
         type=falcor.DeviceType.Vulkan,
         gpu=0,
         enable_debug_layer=False
     )
-
+    
     testbed = falcor.Testbed(
-        width=resolution,
-        height=resolution,
+        width=resolution[0],
+        height=resolution[1],
         create_window=False,
         device=device,
         spp=500
     )
-    render_graph_MinimalPathTracer(testbed)
-    testbed.load_scene(scene_path)
+    render_graph_MinimalPathTracer(testbed,len(impostor_list) + 5)
+    cmd_list = []
+    object_transform = []
+    scene_data = generate_scene_data(impostor_list,model_path,100)
+    i =0
+    for impostor in impostor_list:
+        name = impostor
+        mp= model_path.format(name)
+        mesh = trimesh.load(mp, force='mesh')
+        aabb_min, aabb_max = mesh.bounds
+        ip= impostor_path.format(name)
+        scale = random.uniform(0.1,0.3)
+        with open(ip + "material.json", 'r') as f:
+            material_data = json.load(f)
+            emissive = material_data.get("emissive", [0.0, 0.0, 0.0])
+            roughness = material_data.get("roughness", 0.5)
+        
+        tf = {}
+
+    
+        rotate = [0,random.uniform(0,180),0]
+        ##tf["translate"] = np.array(translate)
+        tf["translate"] = np.array(scene_data[i]["translate"])
+        tf["scale"] = np.array(scene_data[i]["scale"])
+        tf["rotate"] = np.array(scene_data[i]["rotate"])
+        object_transform.append(tf)
+        cmd= make_cmd(name,mp,ip,emissive,scene_data[i]["translate"],scene_data[i]["rotate"],scene_data[i]["scale"][0],roughness)
+        cmd_list.append(cmd)
+        i = i + 1
+    
+    all_cmds = "\n\n".join(cmd_list)
+    dst_path = save_pyscene_with_worker_id(scene_path,worker_id,all_cmds)
+    
+    testbed.load_scene(dst_path)
     print(scene_path)
     print(f"[Worker {worker_id}] Testbed ready.")
+    cnt = 0
     while True:
         task = task_queue.get()
 
@@ -244,22 +550,34 @@ def worker_process(worker_id, resolution, scene_path,
             break
         if len(task) == 2:
             i, output_path = task  # task payload
-            r = sample_roughness()
-       
-            testbed.scene.set_roughness("Floor", r )
+            result = generate_random_material_from_config_step(configs)
+            for mat_name, mat_props in result.items():
+                if "roughness" in mat_props:
+                    testbed.scene.set_roughness(mat_name, mat_props["roughness"])
+                if "baseColor" in mat_props:
+                    testbed.scene.set_basecolor(mat_name, mat_props["baseColor"])
+            emissive_idx = random.randint(0, 99)
+            emissive_name = emissive_list[emissive_idx]
             cam = testbed.scene.camera
-            ps = np.random.uniform(-2, 2, size=[3]) + np.array([0.0, 1.0, 0.0])
-            ps[1] = ps[1] * 0.4
-            cam.position = ps
+            ##ps = [random.uniform(-0.5,0.5),random.uniform(-0.7,0.7),random.uniform(-0.5,3.5)]
+            ps = [0,0.2,2]
+            cam.position = np.array(ps)
+            tt = np.array([0,-0.6,0])
+            # tt[0] = tt[0] + random.uniform(-0.4,0.4)
+            # tt[2] = tt[2] + random.uniform(-0.4,0.4)
+            cam.target = tt
+            testbed.scene.setMaterialSlotByTexturePath("back",emissive_path.format(emissive_name),"Emissive")
+            scene_data = generate_scene_data(impostor_list,model_path,100)
 
-            cam.target = np.array([0.0,0.0, 0.0]) + np.random.uniform(-0.3, 0.3, size=[3])
-            rand_state = {
-                "roughness": float(r),
-                "camera": {
-                    "position": list(f3_to_numpy(cam.position)),
-                    "target": list(f3_to_numpy(cam.target)),
-                }
-            }
+            for data in scene_data:
+                testbed.scene.updateNodeTransformName(data["name"],data["scale"],data["translate"],data["rotate"])
+            # rand_state = {
+            #     "roughness": float(r),
+            #     "camera": {
+            #         "position": list(f3_to_numpy(cam.position)),
+            #         "target": list(f3_to_numpy(cam.target)),
+            #     }
+            # }
         else:
             i, output_path, rand_state = task
             testbed.scene.set_roughness("Wall", rand_state["roughness"] )
@@ -272,10 +590,13 @@ def worker_process(worker_id, resolution, scene_path,
         # === 渲染逻辑（你原来的 render 内部） ===
         
         node_list = testbed.scene.get_scene_graph()
+        
         node_dict = {}
         for node in node_list:
             node_dict[node["name"]] = node
-
+        for key in result.keys():
+            node_dict[key]["roughness"] = result[key]["roughness"]
+            node_dict[key]["baseColor"] = result[key]["baseColor"]
         camera_data ={}
         camera_data["position"] = list(f3_to_numpy( testbed.scene.camera.position))
         camera_data["forward"] = list(normalize(f3_to_numpy( testbed.scene.camera.target) - f3_to_numpy( testbed.scene.camera.position)))
@@ -295,10 +616,10 @@ def worker_process(worker_id, resolution, scene_path,
             json.dump(node_dict, f, indent=4, ensure_ascii=False)
         with open(level_output_path + "camera.json","w") as f:
             json.dump(camera_data, f, indent=4, ensure_ascii=False)
-        result_queue.put((i, rand_state))
+        result_queue.put((i))
 def start_render_farm(resolution, scene_path, output_path,
                       object_data_dict, select_list,
-                      num_workers=8, num_frames=500):
+                      num_workers=8, num_frames=500,impostor_list = [],emissive_list = []):
 
     task_queue = mp.Queue()
     result_queue = mp.Queue()
@@ -310,7 +631,7 @@ def start_render_farm(resolution, scene_path, output_path,
             target=worker_process,
             args=(wid, resolution, scene_path,
                   object_data_dict, select_list,
-                  task_queue,result_queue)
+                  task_queue,result_queue,impostor_list,emissive_list)
         )
         p.start()
         workers.append(p)
@@ -328,202 +649,32 @@ def start_render_farm(resolution, scene_path, output_path,
         p.join()
 
     print("=== All rendering tasks completed ===")
-def start_render_farm2(
-    resolution,
-    scene_path,
-    occlution_path,
-    nolight_path,
-    output_path,
-    occ_output_path,
-    nolight_output_path,
-    object_data_dict,
-    select_list,
-    num_workers=8,
-    num_frames=500,
-):
-    task_queue = mp.Queue()
-    result_queue = mp.Queue()
 
-    # ===============================
-    # 1️⃣ 启动 Worker（只启动一次）
-    # ===============================
-    workers = []
-    for wid in range(num_workers):
-        p = mp.Process(
-            target=worker_process,
-            args=(
-                wid,
-                resolution,
-                scene_path,
-                object_data_dict,
-                select_list,
-                task_queue,
-                result_queue,
-            ),
-        )
-        p.start()
-        workers.append(p)
 
-    # ======================================================
-    # 2️⃣ 第一轮：随机采样 + 渲染 + 记录随机信息
-    # ======================================================
-    print("=== Pass 1: sampling & rendering ===")
-
-    for i in range(num_frames):
-        task_queue.put((i, output_path))
-
-    random_states = {}
-
-    for _ in range(num_frames):
-        i, rand_state = result_queue.get()
-        random_states[i] = rand_state
-
-    # 保存随机状态（强烈建议）
-    os.makedirs(output_path, exist_ok=True)
-    rand_state_path = os.path.join(output_path, "random_states.json")
-    with open(rand_state_path, "w") as f:
-        json.dump(random_states, f, indent=2)
-
-    print(f"[Pass 1] Saved random states to {rand_state_path}")
-
-    # ======================================================
-    # 3️⃣ 第二轮：复用随机信息，再完整跑一遍
-    # ======================================================
-    print("=== Pass 2: replay with fixed random states ===")
-    workers = []
-    task_queue = mp.Queue()
-    result_queue = mp.Queue()
-    for wid in range(num_workers):
-        p = mp.Process(
-            target=worker_process,
-            args=(
-                wid,
-                resolution,
-                nolight_path,
-                object_data_dict,
-                select_list,
-                task_queue,
-                result_queue,
-            ),
-        )
-        p.start()
-        workers.append(p)
-    for i in range(num_frames):
-        rand_state = random_states[i]
-        task_queue.put((i, nolight_output_path, rand_state))
-
-    # 等待第二轮完成（不再需要 result_queue）
-    for _ in range(num_frames):
-        result_queue.get()
-
-    # ===============================
-    # 4️⃣ 关闭 Worker
-    # ===============================
-    for _ in workers:
-        task_queue.put("STOP")
-
-    for p in workers:
-        p.join()
-
-    print("=== All rendering tasks completed (2-pass) ===")
-    workers = []
-    task_queue = mp.Queue()
-    result_queue = mp.Queue()
-    for wid in range(num_workers):
-        p = mp.Process(
-            target=worker_process,
-            args=(
-                wid,
-                resolution,
-                occlution_path,
-                object_data_dict,
-                select_list,
-                task_queue,
-                result_queue,
-            ),
-        )
-        p.start()
-        workers.append(p)
-    for i in range(num_frames):
-        rand_state = random_states[i]
-        task_queue.put((i, occ_output_path, rand_state))
-
-    # 等待第二轮完成（不再需要 result_queue）
-    for _ in range(num_frames):
-        result_queue.get()
-
-    # ===============================
-    # 4️⃣ 关闭 Worker
-    # ===============================
-    for _ in workers:
-        task_queue.put("STOP")
-
-    for p in workers:
-        p.join()
-
-    print("=== All rendering tasks completed (3-pass) ===")
-
-def render(resolution,testbed,scene_path,output_path,object_data_dict,sellect_list):
-    testbed.load_scene(scene_path)
-    scene = testbed.scene
-
-    final_resolution = resolution
-    testbed.scene.camera.nearPlane = 0.001
-    basic_info = {}
-
-    
-    for i in range(500):
-        testbed.resize_frame_buffer(resolution, resolution)
-
-        level_output_path = output_path + "{}/".format(i)
-        if not os.path.exists(level_output_path):
-            os.makedirs(level_output_path)
-
-        r = sample_roughness()
-        testbed.scene.set_roughness("Wall", r )
-        testbed.scene.camera.position = np.random.uniform(-0.3,0.3,size=[3]) + np.array([0.0, 0.25, 1.2])
-        testbed.scene.camera.target = np.array([0.0, -0.3, 0.0]) + np.random.uniform(-0.3,0.3,size=[3])
-        camera_data ={}
-        camera_data["position"] = list(f3_to_numpy( testbed.scene.camera.position))
-        camera_data["forward"] = list(normalize(f3_to_numpy( testbed.scene.camera.target) - f3_to_numpy( testbed.scene.camera.position)))
-        node_list = testbed.scene.get_scene_graph()
-        node_dict = {}
-        for node in node_list:
-            node_dict[node["name"]] = node
-        print(node_dict["Light"]["transform"])
-        testbed.run()
-
-        for name in sellect_list:
-            index = object_data_dict[name]
-            tex2 = testbed.capture_output(
-                level_output_path + '{}_{:05d}.exr'.format(name, i), index)
-        with open(level_output_path + "node.json","w") as f:
-            json.dump(node_dict, f, indent=4, ensure_ascii=False)
-        with open(level_output_path + "camera.json","w") as f:
-            json.dump(camera_data, f, indent=4, ensure_ascii=False)
-         
             
 def main():
-    label ="test"
-    scene_name = "flame"
-    scene = r"{}_ref.pyscene".format(scene_name)
-    scene_path = r'H:\Falcor\scenes/' + scene
-    datasets_path = r"H:\Falcor\datasets\renderdata/" + scene_name + "/"
-    resolution = 512
+    scene_name = "cornel_box"
+    scene = r"{}.pyscene".format(scene_name)
+    #impostor_list = ["Bunny","dragon","box","box2",]
+    impostor_list = []
+    emissive_list = os.listdir(r"H:\Falcor\emissive_crop/")
 
+    datasets_path = r"H:\Falcor\datasets\renderdata/" + scene_name + "/"
 
     if os.path.exists(datasets_path) == False:
         os.makedirs(datasets_path)
 
     # Create device and setup renderer.
     start_render_farm(
-        resolution=512,
-        scene_path=scene_path,
+        resolution=[1920,1080],
+        scene_path=scene_name,
         output_path=datasets_path,
         object_data_dict=object_key_dict,
         select_list=sellect_list,
-        num_workers=4,
-        num_frames=500
+        num_workers=2,
+        num_frames=200,
+        impostor_list=impostor_list,
+        emissive_list=emissive_list
     )
 
 if __name__ == "__main__":

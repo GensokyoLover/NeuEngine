@@ -62,16 +62,12 @@ namespace Falcor
         texDim = uint2(j["texDim"][0].get<uint32_t>()/ std::pow(2, level), j["texDim"][1].get<uint32_t>()/ std::pow(2, level)) ;
         invTexDim = 1.0f / float2(texDim);
         baseCameraResolution = j["baseCameraResolution"].get<int>();
-        if (level == 0) {
-            mpNormalAtlas = Texture::createFromFolder(pDevice, folderPath , false, false, ResourceBindFlags::ShaderResource, Bitmap::ImportFlags::None,"normal");
-            mpAlbedoAtlas = Texture::createFromFile(pDevice, folderPath + "\\albedo_atlas.exr", false, false, ResourceBindFlags::ShaderResource, Bitmap::ImportFlags::None);
-        }
         for (int i = 0; i < 10; i++) {
             std::string pre =std::to_string(i) + "depth";
             mpDepthArray[i] = Texture::createFromFolder(pDevice, folderPath, false, false, ResourceBindFlags::ShaderResource, Bitmap::ImportFlags::None, pre);
         }
         
-        mpDepthAtlas = Texture::createFromFile(pDevice, folderPath + "\\depth_atlas.exr", false, false, ResourceBindFlags::ShaderResource, Bitmap::ImportFlags::None);
+  
         Bitmap::UniqueConstPtr pBitmap = Bitmap::createFromFile(folderPath + "\\lookup_uint16.png",true, Bitmap::ImportFlags::None);
         mpFaceIndex = pDevice->createTexture2D(
             pBitmap->getWidth(),
@@ -257,30 +253,27 @@ namespace Falcor
         //var["texAlbedo"] = mpAlbedoArray;
         //var["texNormal"] = mpNormalArray;
 
-        if (level == 0) {
-            var["texNormalArray"][0] = mpNormalAtlas[0];
-            var["texAlbedoAtlas"] = mpAlbedoAtlas;
-        }
-        var["texDepthAtlas"][level] = mpDepthAtlas;
+ 
         for(int i= 0; i < 10;i++)
             var["texDepthArray"][i] = mpDepthArray[i][0];
    
-        var["texFaceIndex"][level] = mpFaceIndex;
-        var["samplerLinear"][level] = mpLinearSampler;
-        var["samplerPoint"][level] = mpPointSampler;
+        var["texFaceIndex"][0] = mpFaceIndex;
+        var["samplerLinear"][0] = mpLinearSampler;
+        var["samplerPoint"][0] = mpPointSampler;
 
-        if (mpForwardDirs) var["cForward"][level] = mpForwardDirs;
-        if (mpUpDirs) var["cUp"][level] = mpUpDirs;
-        if (mpRightDirs) var["cRight"][level] = mpRightDirs;
-        if (mpPosition) var["cPosition"][level] = mpPosition;
-        if (mpFaces) var["cFace"][level] = mpFaces;
-        if (mpRadius) var["cRadius"][level] = mpRadius;
-        var["level"][level] = level;
-        var["centerWS"][level] = centorWS;
-        var["radius"][level] = radius;
-        var["invTexDim"][level] = invTexDim;
-        var["texDim"][level] = texDim;
-        var["baseCameraResolution"][level] = baseCameraResolution;
+        if (mpForwardDirs) var["cForward"][0] = mpForwardDirs;
+        if (mpUpDirs) var["cUp"][0] = mpUpDirs;
+        if (mpRightDirs) var["cRight"][0] = mpRightDirs;
+        if (mpPosition) var["cPosition"][0] = mpPosition;
+        if (mpFaces) var["cFace"][0] = mpFaces;
+        if (mpRadius) var["cRadius"][0] = mpRadius;
+        var["levels"] = uint4(level);
+        var["centerWS"] = float4(centorWS,1);
+  
+ 
+        var["baseCameraResolution"] = uint4(baseCameraResolution);
+        var["worldTransform"] = worldTransform;
+        var["inverseWorldTransform"] = inverseWorldTransform;
     }
 
     void Impostor::reload(RenderContext* pRenderContext)

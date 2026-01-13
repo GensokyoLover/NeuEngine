@@ -123,10 +123,12 @@ struct ScatterRayData
     uint pathLength;  ///< Path length in number of path segments (0 at origin, 1 at first secondary hit, etc.). Max 2^31.
     float3 origin;    ///< Next path segment origin.
     float3 direction; ///< Next path segment direction.
-    
+    int hitInstanceID;
+    int firsthitInstanceID;
+    float3 direction_radiance;
     //float4 limited
     SampleGenerator sg; ///< Per-ray state for the sample generator (up to 16B).
- 
+    
 
     /**
      * Initializes ray payload with default parameters.
@@ -136,10 +138,12 @@ struct ScatterRayData
         this.terminated = false;
         this.pathLength = 0;
         this.radiance = float3(0, 0, 0);
+        this.direction_radiance = float3(0, 0, 0);
         this.thp = float3(1, 1, 1);
         this.origin = float3(0, 0, 0);
         this.direction = float3(0, 0, 0);
         this.sg = sg;
+        this.hitInstanceID = -1;
     }
 };
 
@@ -350,10 +354,8 @@ void handleHit(const HitInfo hit, inout ScatterRayData rayData)
     let mi = gScene.materials.getMaterialInstance(sd, lod);
 
     // Add emitted light.
-    if (kUseEmissiveLights && (kComputeDirect || rayData.pathLength > 0))
-    {
-        rayData.radiance += rayData.thp * mi.getProperties(sd).emission;
-    }
+    
+    
 
 
     // Check whether to terminate based on max depth.
@@ -364,6 +366,14 @@ void handleHit(const HitInfo hit, inout ScatterRayData rayData)
         return;
     }
 
+    if (kUseEmissiveLights && (kComputeDirect || rayData.pathLength > 0))
+    {
+        rayData.radiance += rayData.thp * mi.getProperties(sd).emission;
+    }
+    if (kUseEmissiveLights && (kComputeDirect || rayData.pathLength > 0) && rayData.hitInstanceID == rayData.firsthitInstanceID)
+    {
+        rayData.direction_radiance += rayData.thp * mi.getProperties(sd).emission;
+    }
     // Compute ray origin for new rays spawned from the hit.
     float3 rayOrigin;
     if (isCurveHit)
@@ -439,6 +449,7 @@ float3 hash3(uint n)
 float3 tracePath(const uint2 pixel, const uint2 frameDim)
 {
     float3 outColor = float3(0.f);
+    float3 directColor = float3(0.f);
     Ray fake_ray;
     if (gScene.camera.data.focalLength == 0.f)
         fake_ray = gScene.camera.computeRayOrthographic(pixel, frameDim, false);
@@ -462,8 +473,6 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim)
         gView[pixel] = 0;
         gRayPos[pixel] = 0;
         gReflect[pixel] = 0;
-        
- 
     }
     gView[DispatchRaysIndex().xy] = float4(-primaryRayDir, 1);
     
@@ -506,10 +515,12 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim)
         {
             // Always output directly emitted light, independent of whether emissive materials are treated as light sources or not.
             outColor += mi.getProperties(sd).emission;
+            directColor += mi.getProperties(sd).emission;
 
             // Add contribution of direct light from analytic lights.
             // Light probe and mesh lights are handled by the scatter ray hit/miss shaders.
             outColor += kUseAnalyticLights ? evalDirectAnalytic(sd, mi, sg) : float3(0.f);
+            directColor += kUseAnalyticLights ? evalDirectAnalytic(sd, mi, sg) : float3(0.f);
         }
 
         // Prepare ray payload.
@@ -607,16 +618,8 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim)
         else {
             gDebug[pixel] = float4(0,0,0,1);
         }
-        if (rayData.radiance.x == 0) {
-            gType[pixel] = float4(0, 0, 0, 1);
-            gType2[pixel] = float4(0);
-        }
-        else {
-            // gType[pixel] = bad_type;
-            gType[pixel] = float4(gSphere[pixel].xyz,1) * 10 ;
-            gType2[pixel] = float4(tnear);
-            
-        }
+        directColor += rayData.direction_radiance;
+        gType[pixel] = float4(directColor,1);
         //outColor += rayData.radiance;
     }
     else
@@ -680,6 +683,7 @@ void scatterTriangleMeshAnyHit(inout ScatterRayData rayData, BuiltInTriangleInte
     GeometryInstanceID instanceID = getGeometryInstanceID();
     VertexData v = getVertexData(instanceID, PrimitiveIndex(), attribs);
     const uint materialID = gScene.getMaterialID(instanceID);
+    
     if (gScene.materials.alphaTest(v, materialID, 0.f))
         IgnoreHit();
 }
@@ -688,10 +692,19 @@ void scatterTriangleMeshAnyHit(inout ScatterRayData rayData, BuiltInTriangleInte
 void scatterTriangleMeshClosestHit(inout ScatterRayData rayData, BuiltInTriangleIntersectionAttributes attribs)
 {
     TriangleHit triangleHit;
-    triangleHit.instanceID = getGeometryInstanceID();
+    triangleHit.instanceID = getGeometryInstanceID();   
     triangleHit.primitiveIndex = PrimitiveIndex();
     triangleHit.barycentrics = attribs.barycentrics;
+    if (rayData.pathLength == 0) {
+        rayData.hitInstanceID = triangleHit.instanceID.index;
+        rayData.firsthitInstanceID = triangleHit.instanceID.index;
+    }
+    else {
+        rayData.hitInstanceID = triangleHit.instanceID.index;
+    }
+
     handleHit(HitInfo(triangleHit), rayData);
+    
 }
 
 [shader("anyhit")]
@@ -701,6 +714,7 @@ void shadowTriangleMeshAnyHit(inout ShadowRayData rayData, BuiltInTriangleInters
     GeometryInstanceID instanceID = getGeometryInstanceID();
     VertexData v = getVertexData(instanceID, PrimitiveIndex(), attribs);
     const uint materialID = gScene.getMaterialID(instanceID);
+
     if (gScene.materials.alphaTest(v, materialID, 0.f))
         IgnoreHit();
 }
