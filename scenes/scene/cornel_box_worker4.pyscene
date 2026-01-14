@@ -61,18 +61,17 @@ right.roughness = 0.1
 # This is useful for creating a light source.
 quadMesh = TriangleMesh()
 
+normal = float3(0, 1, 0)
 
-normal = float3(0, 1, 0) 
-quadMesh.addVertex(float3(0, 0, 0), normal, float2(0.7071, 0.7071)) 
-quadMesh.addVertex(float3(0.7071, 0, 0.7071), normal, float2(0, 0)) 
-quadMesh.addVertex(float3(0.7071, 0, -0.7071), normal, float2(0, 1)) 
-quadMesh.addVertex(float3(-0.7071, 0, -0.7071), normal, float2(1, 1)) 
-quadMesh.addVertex(float3(-0.7071, 0, 0.7071), normal, float2(1, 0))
+# 四个角
+quadMesh.addVertex(float3(-0.7071, 0,  0.7071), normal, float2(0, 0))
+quadMesh.addVertex(float3( 0.7071, 0,  0.7071), normal, float2(1, 0))
+quadMesh.addVertex(float3( 0.7071, 0, -0.7071), normal, float2(1, 1))
+quadMesh.addVertex(float3(-0.7071, 0, -0.7071), normal, float2(0, 1))
 
+# 两个三角形
 quadMesh.addTriangle(0, 1, 2)
 quadMesh.addTriangle(0, 2, 3)
-quadMesh.addTriangle(0, 3, 4)
-quadMesh.addTriangle(0, 4, 1)
 
 sceneBuilder.addMeshInstance(
     sceneBuilder.addNode('floor', Transform(scaling=float3(1, 1.0, 1),translation=float3(0, -0.7071, 0))),
@@ -105,7 +104,26 @@ sceneBuilder.addMeshInstance(
 # )
 
 # Create camera
-
+sceneBuilder.addImpostor(
+    r'H:\Falcor\datasets\impostor\ahmed-nishaath-tD7e9hVIRZo-unsplash\level1/',
+    r'floor'
+)
+sceneBuilder.addImpostor(
+    r'H:\Falcor\datasets\impostor\ahmed-nishaath-tD7e9hVIRZo-unsplash\level1/',
+    r'ceil'
+)
+sceneBuilder.addImpostor(
+    r'H:\Falcor\datasets\impostor\ahmed-nishaath-tD7e9hVIRZo-unsplash\level1/',
+    r'back'
+)
+sceneBuilder.addImpostor(
+    r'H:\Falcor\datasets\impostor\ahmed-nishaath-tD7e9hVIRZo-unsplash\level1/',
+    r'left'
+)
+sceneBuilder.addImpostor(
+    r'H:\Falcor\datasets\impostor\ahmed-nishaath-tD7e9hVIRZo-unsplash\level1/',
+    r'right'
+)
 camera = Camera()
 camera.position = float3(0, 0.28, 1.2)
 camera.target = float3(0, 0.28, 0)
@@ -114,59 +132,4 @@ camera.focalLength = 42.0
 sceneBuilder.addCamera(camera)
 
 # ==== AUTO GENERATED FOR WORKER 4 ====
-Bunny = StandardMaterial('Bunny')
-Bunny.baseColor = float4(1.0, 1.0, 1.0, 1.0)
-Bunny.emissiveColor = float3(0.8096669063042858, 0.5114807921170792, 0.3968139703088478)
-Bunny.emissiveFactor = 1.0
 
-flags = TriangleMeshImportFlags.GenSmoothNormals | TriangleMeshImportFlags.JoinIdenticalVertices
-BunnyMesh = TriangleMesh.createFromFile(
-    r'H:\Falcor/model/Bunny.obj',
-    flags
-)
-
-sceneBuilder.addMeshInstance(
-    sceneBuilder.addNode(
-        'Bunny',
-        Transform(
-            translation=float3(-0.4493273586751741, 0.5568362112541033, 0.4036759948187858),
-            rotationEulerDeg=float3(0, 173.5556715686648, 0),
-            scaling=0.11997287435397802
-        )
-    ),
-    sceneBuilder.addTriangleMesh(BunnyMesh, Bunny, True)
-)
-
-sceneBuilder.addImpostor(
-    r'H:\Falcor/datasets/impostor/Bunny/level1/',
-    r'Bunny'
-)
-
-
-dragon = StandardMaterial('dragon')
-dragon.baseColor = float4(1.0, 1.0, 1.0, 1.0)
-dragon.emissiveColor = float3(0.7054615043670285, 0.9679823621840922, 0.7190164031853217)
-dragon.emissiveFactor = 1.0
-
-flags = TriangleMeshImportFlags.GenSmoothNormals | TriangleMeshImportFlags.JoinIdenticalVertices
-dragonMesh = TriangleMesh.createFromFile(
-    r'H:\Falcor/model/dragon.obj',
-    flags
-)
-
-sceneBuilder.addMeshInstance(
-    sceneBuilder.addNode(
-        'dragon',
-        Transform(
-            translation=float3(-0.3428181383881342, 0.5610824781778171, -0.6200083457351413),
-            rotationEulerDeg=float3(0, 132.13069939365954, 0),
-            scaling=0.22251803154181954
-        )
-    ),
-    sceneBuilder.addTriangleMesh(dragonMesh, dragon, True)
-)
-
-sceneBuilder.addImpostor(
-    r'H:\Falcor/datasets/impostor/dragon/level1/',
-    r'dragon'
-)

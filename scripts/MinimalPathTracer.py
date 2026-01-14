@@ -20,7 +20,6 @@ def render_graph_MinimalPathTracer():
     g.addEdge("MinimalPathTracer.type", "AccumulatePass2.input")
     g.markOutput("ToneMapper.dst")
     g.markOutput("MinimalPathTracer.emission")
-    g.markOutput("MinimalPathTracer.mind")
     return g
 
 MinimalPathTracer = render_graph_MinimalPathTracer()

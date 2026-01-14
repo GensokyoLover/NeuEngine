@@ -122,27 +122,27 @@ class ImpostorTrainingDataset(Dataset):
         # self.training_keys = ["AccumulatePassoutput","albedo","depth","specular","normal","position","roughness","view","raypos","emission"]
 
         self.device = device
-        init_file_list = os.listdir(self.root_dir)
-        self.roughness_floor = 2
-        self.file_dict = {}
-        for file in init_file_list:
-            _,_,_,_,roughness,_ = file.split("_")
-            roughness = int(roughness)
-            if roughness not in self.file_dict.keys():
-                self.file_dict[roughness] = []
-            self.file_dict[roughness].append(file)
-        # self.file_dict[0] = ["bucket_0_12_14_0_part0.pkl.zst"]
-        if 0 not in self.file_dict.keys():
-            self.file_dict[0] = []
-        for i in range(1,5):
-            if i not in self.file_dict.keys():
-                self.file_dict[i] = []
-            self.file_dict[i] = self.file_dict[i] + self.file_dict[i-1]
+        self.init_file_list = os.listdir(self.root_dir)
+        # self.roughness_floor = 2
+        # self.file_dict = {}
+        # for file in init_file_list:
+        #     _,_,_,_,roughness,_ = file.split("_")
+        #     roughness = int(roughness)
+        #     if roughness not in self.file_dict.keys():
+        #         self.file_dict[roughness] = []
+        #     self.file_dict[roughness].append(file)
+        # # self.file_dict[0] = ["bucket_0_12_14_0_part0.pkl.zst"]
+        # if 0 not in self.file_dict.keys():
+        #     self.file_dict[0] = []
+        # for i in range(1,5):
+        #     if i not in self.file_dict.keys():
+        #         self.file_dict[i] = []
+        #     self.file_dict[i] = self.file_dict[i] + self.file_dict[i-1]
     def __len__(self):
-        return len(self.file_dict[self.roughness_floor])
+        return len(self.init_file_list)
 
     def __getitem__(self, idx):
-        file_list = self.file_dict[self.roughness_floor]
+        file_list = self.init_file_list
         idx = idx % len(file_list)
         scene_id = file_list[idx]
 
@@ -154,8 +154,8 @@ class ImpostorTrainingDataset(Dataset):
         sample = pickle.loads(decompressed_data)
         
 
-        for key in sample:
-            sample[key] = sample[key].reshape(256, 256, *sample[key].shape[1:])
+        # for key in sample:
+        #     sample[key] = sample[key].reshape(256, 256, *sample[key].shape[1:])
 
         return sample,scene_id
     

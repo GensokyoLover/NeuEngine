@@ -12,6 +12,70 @@ import os
 import trimesh
 import numpy as np
 from pathlib import Path
+import trimesh
+import numpy as np
+import os
+
+def process_one_glb(in_path, out_path):
+    try:
+        scene_or_mesh = trimesh.load(in_path, force='scene')
+
+        # 统一转成一个 mesh（合并所有子 mesh）
+        if isinstance(scene_or_mesh, trimesh.Scene):
+            mesh = trimesh.util.concatenate(
+                [g for g in scene_or_mesh.geometry.values()]
+            )
+        else:
+            mesh = scene_or_mesh
+
+        if mesh.vertices.shape[0] == 0:
+            print(f"[WARN] Empty mesh: {in_path}")
+            return
+
+        # ---------- AABB ----------
+        aabb_min, aabb_max = mesh.bounds
+        center = (aabb_min + aabb_max) * 0.5
+        diag = np.linalg.norm(aabb_max - aabb_min)
+
+        if diag < 1e-8:
+            print(f"[WARN] Degenerate AABB: {in_path}")
+            return
+
+        # ---------- Transform ----------
+        scale = 2.0 / diag
+
+        # 平移到原点
+        mesh.apply_translation(-center)
+        # 缩放到对角线 = 2
+        mesh.apply_scale(scale)
+
+        # ---------- 保存 ----------
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        mesh.export(out_path)
+
+    except Exception as e:
+        print(f"[ERROR] Failed {in_path}: {e}")
+import os
+from concurrent.futures import ProcessPoolExecutor, as_completed
+
+def process_glb_dir_parallel(input_dir, output_dir, max_workers=None):
+    glb_files = [
+        f for f in os.listdir(input_dir)
+        if f.lower().endswith(".glb")
+    ]
+
+    tasks = []
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        for fname in glb_files:
+            in_path = os.path.join(input_dir, fname)
+            out_path = os.path.join(output_dir, fname)
+
+            tasks.append(
+                executor.submit(process_one_glb, in_path, out_path)
+            )
+
+        for f in as_completed(tasks):
+            f.result()  # 若子进程异常，这里会抛
 
 def process_single_obj(input_path, output_path):
     """
@@ -97,17 +161,16 @@ def batch_process(input_dir, output_dir):
     print(f"Output directory: {output_path.resolve()}")
 
 
-# --- 使用示例 ---
-# input_folder = r"H:\Falcor\media\objaverse_glb/"
-# output_folder = r"H:\Falcor\media\objaverse_glb_normalized/"
-# # 现在的 1.0 代表对角线长度为 1.0
-# target_diag = 2.0  
+input_folder = r"H:\Falcor\media\objaverse_glb/"
+output_folder = r"H:\Falcor\media\objaverse_glb_normalized/"
+# 现在的 1.0 代表对角线长度为 1.0
+target_diag = 2.0  
 
-# if not os.path.exists(output_folder):
-#     os.makedirs(output_folder)
+if not os.path.exists(output_folder):
+    os.makedirs(output_folder)
 
-# for glb_file in glob.glob(os.path.join(input_folder, "*.glb")):
-#     process_glb_diagonal(glb_file, os.path.join(output_folder, os.path.basename(glb_file)), target_diag)
+for glb_file in glob.glob(os.path.join(input_folder, "*.glb")):
+    process_glb_diagonal(glb_file, os.path.join(output_folder, os.path.basename(glb_file)), target_diag)
 
 def normalize_obj_to_aabb_radius_1(input_dir):
     assert os.path.isdir(input_dir), f"{input_dir} 不是一个目录"
@@ -155,8 +218,21 @@ def normalize_obj_to_aabb_radius_1(input_dir):
 
 
 if __name__ == "__main__":
-  
-    INPUT_FOLDER = r"H:\Falcor/model/"      # 原始 OBJ 文件夹
-    OUTPUT_FOLDER = r"H:\Falcor/model/" # 处理后存放文件夹
+   
+    # INPUT_FOLDER = r"H:\Falcor/model/"      # 原始 OBJ 文件夹
+    # OUTPUT_FOLDER = r"H:\Falcor/model/" # 处理后存放文件夹
     
-    batch_process(INPUT_FOLDER, OUTPUT_FOLDER)
+    # batch_process(INPUT_FOLDER, OUTPUT_FOLDER)
+
+    input_dir = r"H:\Falcor\objaverse_glb"
+    output_dir = r"H:\Falcor\objaverse_glb_normalized"
+
+    # 建议：
+    # - HDD / 网络盘：max_workers=4
+    # - 本地 NVMe：os.cpu_count()
+    process_glb_dir_parallel(
+        input_dir,
+        output_dir,
+        max_workers=8
+    )
+

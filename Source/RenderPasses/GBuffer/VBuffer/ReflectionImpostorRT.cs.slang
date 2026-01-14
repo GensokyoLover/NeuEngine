@@ -54,18 +54,15 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID)
 
     for (int i = 0; i < gVBufferRT.impostorCnt; i++) {
         uint idx = NonUniformResourceIndex(i);
-        gDepth0[idx][pixel] = float4(0);
-        gDepth1[idx][pixel] = float4(0);
-        gDepth2[idx][pixel] = float4(0);
-        gDir0[idx][pixel] = float4(0);
-        gDir1[idx][pixel] = float4(0);
-        gDir2[idx][pixel] = float4(0);
-        gAlbedo0[idx][pixel] = float4(0);
-        gAlbedo1[idx][pixel] = float4(0);
-        gAlbedo2[idx][pixel] = float4(0);
+        gWDepth[idx][pixel] = float4(0);
+        gSphere[idx][pixel] = float4(0);
+        
+
         if (idx == 0) {
             float4x4 invM = gVBufferRT.gImpostor0.inverseWorldTransform;
             float3 rayPos_local = mul(invM, float4(gPrePosition[pixel].xyz, 1.0)).xyz;
+            float3 reflect_pos_local = mul(invM, float4(gReflectPos[pixel].xyz, 1.0)).xyz;
+            gDebug[idx][pixel] = float4(reflect_pos_local,1);
             float3 rayDirL_raw = mul((float3x3)invM, gPreDirection[pixel].xyz);
             float4 result4 = gVBufferRT.sampleImpostorSingleViewLevel(
         pixel, gVBufferRT.gImpostor0, rayDirL_raw, rayPos_local, 0, depth_tanh, idx);
@@ -74,6 +71,8 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID)
             float4x4 invM = gVBufferRT.gImpostor1.inverseWorldTransform;
             float3 rayPos_local = mul(invM, float4(gPrePosition[pixel].xyz, 1.0)).xyz;
             float3 rayDirL_raw = mul((float3x3)invM, gPreDirection[pixel].xyz);
+            float3 reflect_pos_local = mul(invM, float4(gReflectPos[pixel].xyz, 1.0)).xyz;
+            gDebug[idx][pixel] = float4(reflect_pos_local, 1);
             float4 result4 = gVBufferRT.sampleImpostorSingleViewLevel(
         pixel, gVBufferRT.gImpostor1, rayDirL_raw, rayPos_local, 0, depth_tanh, idx);
         }
@@ -81,6 +80,8 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID)
             float4x4 invM = gVBufferRT.gImpostor2.inverseWorldTransform;
             float3 rayPos_local = mul(invM, float4(gPrePosition[pixel].xyz, 1.0)).xyz;
             float3 rayDirL_raw = mul((float3x3)invM, gPreDirection[pixel].xyz);
+            float3 reflect_pos_local = mul(invM, float4(gReflectPos[pixel].xyz, 1.0)).xyz;
+            gDebug[idx][pixel] = float4(reflect_pos_local, 1);
             float4 result4 = gVBufferRT.sampleImpostorSingleViewLevel(
         pixel, gVBufferRT.gImpostor2, rayDirL_raw, rayPos_local, 0, depth_tanh, idx);
         }
@@ -88,6 +89,8 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID)
             float4x4 invM = gVBufferRT.gImpostor3.inverseWorldTransform;
             float3 rayPos_local = mul(invM, float4(gPrePosition[pixel].xyz, 1.0)).xyz;
             float3 rayDirL_raw = mul((float3x3)invM, gPreDirection[pixel].xyz);
+            float3 reflect_pos_local = mul(invM, float4(gReflectPos[pixel].xyz, 1.0)).xyz;
+            gDebug[idx][pixel] = float4(reflect_pos_local, 1);
             float4 result4 = gVBufferRT.sampleImpostorSingleViewLevel(
         pixel, gVBufferRT.gImpostor3, rayDirL_raw, rayPos_local, 0, depth_tanh, idx);
         }
@@ -95,6 +98,8 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID)
             float4x4 invM = gVBufferRT.gImpostor4.inverseWorldTransform;
             float3 rayPos_local = mul(invM, float4(gPrePosition[pixel].xyz, 1.0)).xyz;
             float3 rayDirL_raw = mul((float3x3)invM, gPreDirection[pixel].xyz);
+            float3 reflect_pos_local = mul(invM, float4(gReflectPos[pixel].xyz, 1.0)).xyz;
+            gDebug[idx][pixel] = float4(reflect_pos_local, 1);
             float4 result4 = gVBufferRT.sampleImpostorSingleViewLevel(
         pixel, gVBufferRT.gImpostor4, rayDirL_raw, rayPos_local, 0, depth_tanh, idx);
         }
@@ -102,6 +107,8 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID)
             float4x4 invM = gVBufferRT.gImpostor5.inverseWorldTransform;
             float3 rayPos_local = mul(invM, float4(gPrePosition[pixel].xyz, 1.0)).xyz;
             float3 rayDirL_raw = mul((float3x3)invM, gPreDirection[pixel].xyz);
+            float3 reflect_pos_local = mul(invM, float4(gReflectPos[pixel].xyz, 1.0)).xyz;
+            gDebug[idx][pixel] = float4(reflect_pos_local, 1);
             float4 result4 = gVBufferRT.sampleImpostorSingleViewLevel(
         pixel, gVBufferRT.gImpostor5, rayDirL_raw, rayPos_local, 0, depth_tanh, idx);
         }
@@ -109,6 +116,8 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID)
             float4x4 invM = gVBufferRT.gImpostor6.inverseWorldTransform;
             float3 rayPos_local = mul(invM, float4(gPrePosition[pixel].xyz, 1.0)).xyz;
             float3 rayDirL_raw = mul((float3x3)invM, gPreDirection[pixel].xyz);
+            float3 reflect_pos_local = mul(invM, float4(gReflectPos[pixel].xyz, 1.0)).xyz;
+            gDebug[idx][pixel] = float4(reflect_pos_local, 1);
             float4 result4 = gVBufferRT.sampleImpostorSingleViewLevel(
         pixel, gVBufferRT.gImpostor6, rayDirL_raw, rayPos_local, 0, depth_tanh, idx);
         }
@@ -116,6 +125,8 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID)
             float4x4 invM = gVBufferRT.gImpostor7.inverseWorldTransform;
             float3 rayPos_local = mul(invM, float4(gPrePosition[pixel].xyz, 1.0)).xyz;
             float3 rayDirL_raw = mul((float3x3)invM, gPreDirection[pixel].xyz);
+            float3 reflect_pos_local = mul(invM, float4(gReflectPos[pixel].xyz, 1.0)).xyz;
+            gDebug[idx][pixel] = float4(reflect_pos_local, 1);
             float4 result4 = gVBufferRT.sampleImpostorSingleViewLevel(
         pixel, gVBufferRT.gImpostor7, rayDirL_raw, rayPos_local, 0, depth_tanh, idx);
         }
@@ -123,6 +134,8 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID)
             float4x4 invM = gVBufferRT.gImpostor8.inverseWorldTransform;
             float3 rayPos_local = mul(invM, float4(gPrePosition[pixel].xyz, 1.0)).xyz;
             float3 rayDirL_raw = mul((float3x3)invM, gPreDirection[pixel].xyz);
+            float3 reflect_pos_local = mul(invM, float4(gReflectPos[pixel].xyz, 1.0)).xyz;
+            gDebug[idx][pixel] = float4(reflect_pos_local, 1);
             float4 result4 = gVBufferRT.sampleImpostorSingleViewLevel(
         pixel, gVBufferRT.gImpostor8, rayDirL_raw, rayPos_local, 0, depth_tanh, idx);
         }
@@ -130,6 +143,8 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID)
             float4x4 invM = gVBufferRT.gImpostor9.inverseWorldTransform;
             float3 rayPos_local = mul(invM, float4(gPrePosition[pixel].xyz, 1.0)).xyz;
             float3 rayDirL_raw = mul((float3x3)invM, gPreDirection[pixel].xyz);
+            float3 reflect_pos_local = mul(invM, float4(gReflectPos[pixel].xyz, 1.0)).xyz;
+            gDebug[idx][pixel] = float4(reflect_pos_local, 1);
             float4 result4 = gVBufferRT.sampleImpostorSingleViewLevel(
         pixel, gVBufferRT.gImpostor9, rayDirL_raw, rayPos_local, 0, depth_tanh, idx);
         }
@@ -137,6 +152,8 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID)
             float4x4 invM = gVBufferRT.gImpostor10.inverseWorldTransform;
             float3 rayPos_local = mul(invM, float4(gPrePosition[pixel].xyz, 1.0)).xyz;
             float3 rayDirL_raw = mul((float3x3)invM, gPreDirection[pixel].xyz);
+            float3 reflect_pos_local = mul(invM, float4(gReflectPos[pixel].xyz, 1.0)).xyz;
+            gDebug[idx][pixel] = float4(reflect_pos_local, 1);
             float4 result4 = gVBufferRT.sampleImpostorSingleViewLevel(
         pixel, gVBufferRT.gImpostor10, rayDirL_raw, rayPos_local, 0, depth_tanh, idx);
         }

@@ -19,6 +19,135 @@ import zstandard as zstd
 import multiprocessing as mp
 from functools import partial
 from tqdm import tqdm
+import os
+import json
+import torch
+import cv2
+import pyexr
+import pickle
+import numpy as np
+from concurrent.futures import ThreadPoolExecutor
+
+def read_exr_worker(args):
+    """
+    工作线程函数：读取单个 EXR 文件
+    """
+    path, file_id_str, name_key, channel_count = args
+    id_val = int(file_id_str)
+    image_path = os.path.join(path, file_id_str, f"{name_key}_{id_val:05d}.exr")
+    
+    try:
+        # 读取数据，只保留需要的通道
+        # 注意：pyexr 读取通常返回 numpy array
+        data = pyexr.read(image_path)[:, :, :channel_count]
+        return name_key, id_val, data
+    except Exception as e:
+        print(f"Error reading {image_path}: {e}")
+        return None
+
+def load_impostor2_optimized(path,cnt):
+    """
+    并行加速版的 Impostor 加载函数
+    """
+    impostor = ImpostorPT()
+    
+    print(f"Loading raw files from {path}...")
+    
+    # --- 1. JSON 元数据加载 (保持串行，因为很快) ---
+    with open(path + "basic_info.json", "r") as file:
+        basic_info = json.load(file)
+    impostor.radius = basic_info["radius"]
+    # 向量数据依然可以直接上 GPU，因为数据量极小
+    impostor.centerWS = torch.tensor(basic_info["centorWS"], dtype=torch.float32).cuda()
+    
+    with open(path + "faces.json", "r") as file:
+        impostor.cFace = torch.tensor(json.load(file), dtype=torch.int32).cuda()
+    
+    with open(path + "forward.json", "r") as file:
+        impostor.cForward = torch.tensor(json.load(file), dtype=torch.float32).cuda()
+    
+    with open(path + "up.json", "r") as file:
+        impostor.cUp = torch.tensor(json.load(file), dtype=torch.float32).cuda()
+    
+    with open(path + "right.json", "r") as file:
+        impostor.cRight = torch.tensor(json.load(file), dtype=torch.float32).cuda()
+    
+    with open(path + "position.json", "r") as file:
+        impostor.cPosition = torch.tensor(json.load(file), dtype=torch.float32).cuda()
+    
+    with open(path + "radius.json", "r") as file:
+        radius_info = json.load(file)
+    impostor.cRadius = torch.tensor(radius_info, dtype=torch.float32).cuda().unsqueeze(-1)
+    
+    texFaceIndex = cv2.imread(path + "lookup_uint16.png", cv2.IMREAD_UNCHANGED)
+    impostor.texFaceIndex = torch.tensor(texFaceIndex, dtype=torch.int32).cuda()
+
+    # --- 2. 纹理并行加载逻辑 ---
+    
+    impostor.texDict = {}
+    
+    # 假设 buffer_channel 是全局变量，或者你可以将其作为参数传入
+    # 为了线程安全和速度，我们先在 CPU 上分配 tensor (device='cpu')
+    # 使用 pin_memory=True 可以加速后续 CPU -> GPU 的传输
+    keys_to_load = ["albedo", "depth", "emission", "normal", "roughness"]
+    
+    # 预分配 CPU 内存
+    cpu_tex_dict = {}
+    for key in keys_to_load:
+        # 假设最大 id 是 42 (根据原始代码逻辑)，或者扫描 subdirs 获取最大数量
+        # 这里保持原始逻辑的 shape，如果 ID 不是连续的，需要确保 size 足够大
+        if key == "depth":
+            cpu_tex_dict[key] = torch.zeros((cnt, 512, 512, 2), dtype=torch.float32)
+        else:
+            cpu_tex_dict[key] = torch.zeros((cnt, 512, 512, buffer_channel[key]), dtype=torch.float32) # device='cpu'
+
+    subdirs = [d for d in os.listdir(path) if os.path.isdir(os.path.join(path, d))]
+    
+    # 构建任务列表
+    tasks = []
+    for file_id_str in subdirs:
+        for name_key in keys_to_load:
+            # 传入必要参数，避免在线程中查找全局变量
+            if name_key == "depth":
+                tasks.append((path, file_id_str, name_key, 2))
+            else:
+                tasks.append((path, file_id_str, name_key, buffer_channel[name_key]))
+    
+    print(f"Starting parallel load for {len(tasks)} textures...")
+    
+    # 使用线程池并行读取
+    # max_workers 可以根据你的 CPU 核心数调整，通常 I/O 密集型可以设大一点 (e.g., 16-32)
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        results = executor.map(read_exr_worker, tasks)
+        
+        # 将读取回来的 numpy 数据填入 CPU Tensor
+        for res in results:
+            if res is not None:
+                key, idx, data = res
+                # 转换 numpy -> torch (共享内存，很快)
+                cpu_tex_dict[key][idx] = torch.from_numpy(data)
+
+    print("Transferring textures to GPU...")
+   
+    
+    for key in keys_to_load:
+        # 一次性将整个大 Tensor 传到 GPU，效率远高于循环传小切片
+        impostor.texDict[key] = cpu_tex_dict[key].cuda(non_blocking=True)
+        
+    # 在 GPU 上进行 Scale 操作 (向量化操作，极快)
+    # --- 4. 保存为 pkl.zst ---
+    filename = f"impostor.pkl.zst"
+    output_path = os.path.join(path, filename)
+    
+    print(f"Compressing and saving to {output_path}...")
+    cctx = zstd.ZstdCompressor(level=3)
+    packed = pickle.dumps(impostor)
+    with open(output_path, "wb") as f:
+        f.write(cctx.compress(packed))
+            
+    print("Save complete.")
+    
+    return impostor
 
 # 假设 buffer_channel 和 ggx_theta_from_roughness 定义在外部或此处
 # buffer_channel = { ... } 
@@ -279,6 +408,140 @@ def renderdata_preprocess(path,test=False):
                 N = final_bucket[triplet]["AccumulatePassoutput"].shape[0]
 
     return sample,scene_id
+import copy
+
+def process_one_scene(args):
+    scene_str, path, key_list, roughness, theta95_deg = args
+
+    if scene_str == "train":
+        return None
+
+    save_key_list = copy.deepcopy(key_list)
+
+    node_path = os.path.join(path, scene_str, "node.json")
+    with open(node_path, "r") as f:
+        node = json.load(f)
+
+    node_cnt = len(node.keys())
+    for i in range(node_cnt):
+        save_key_list += [
+            f"sphere_{i}", f"wdepth_{i}"
+        ]
+
+    scene_id = int(scene_str)
+    folder = os.path.join(path, scene_str)
+    output_path = os.path.join(path, "train", f"{scene_str}.pkl.zst")
+
+    sample = {}
+
+    for key in save_key_list:
+        exr_path = os.path.join(folder, f"{key}_{scene_id:05d}.exr")
+        if key not in buffer_channel:
+            data = pyexr.read(exr_path)
+        else:
+            data = pyexr.read(exr_path)[..., :buffer_channel[key]]
+
+        sample[key] = torch.tensor(data, device="cuda")
+
+    sample["node"] = node
+
+    cctx = zstd.ZstdCompressor(level=3)
+    packed = pickle.dumps(sample)
+    with open(output_path, "wb") as f:
+        f.write(cctx.compress(packed))
+
+    print(f"[Scene {scene_str}] saved")
+    return scene_str
+import multiprocessing as mp
+
+def renderdata_preprocess3(path, test=False, num_workers=8):
+    roughness = torch.round(torch.arange(0.0, 1.0 + 1e-9, 0.01) * 100) / 100
+    theta95_deg = ggx_theta_from_roughness(
+        roughness,
+        alpha_is_roughness_sq=True,
+        degrees=True,
+        energy_clamp=75
+    ).cuda()
+
+    key_list = [
+        "position","albedo","specular","normal","roughness","depth",
+        "emission","AccumulatePassoutput","view","raypos","reflect","AccumulatePassoutput2"
+    ]
+
+    SAVE_ROOT = os.path.join(path, "train")
+    os.makedirs(SAVE_ROOT, exist_ok=True)
+
+    file_list = os.listdir(path)
+
+    tasks = [
+        (scene_str, path, key_list, roughness, theta95_deg)
+        for scene_str in file_list
+        if scene_str != "train"
+    ]
+
+    ctx = mp.get_context("spawn")  # ⚠️ CUDA 必须 spawn
+    with ctx.Pool(processes=num_workers) as pool:
+        pool.map(process_one_scene, tasks)
+
+# def renderdata_preprocess3(path,test=False):
+#     roughness = torch.round(torch.arange(0.0, 1.0 + 1e-9, 0.01) * 100) / 100
+#     key_list = ["position","albedo","specular","normal","roughness","depth","emission","AccumulatePassoutput","view","raypos","mind","reflect"]
+    
+    
+#     theta95_deg = ggx_theta_from_roughness(roughness, alpha_is_roughness_sq=True, degrees=True,energy_clamp=75).cuda()
+#     print(theta95_deg)
+#     MAX_BUCKET_SIZE = 256 * 256  # 65536
+#     SAVE_ROOT =path + "train/"
+#     os.makedirs(SAVE_ROOT, exist_ok=True)
+#     file_list = os.listdir(path)
+#     final_bucket = {}
+#     bucket_save_count = {}  
+#     cnt = 0
+#     for scene_str in file_list:
+#         if scene_str == "train":
+#             continue
+#         save_key_list = copy.deepcopy(key_list)
+#         node_path = os.path.join(path, f"{scene_str}", "node.json")
+#         with open(node_path, "r") as f:
+#             node = json.load(f)
+#         node_cnt = len(node.keys())
+#         for i in range(node_cnt):
+#             save_key_list.append("uv0_{}".format(i))
+#             save_key_list.append("uv1_{}".format(i))
+#             save_key_list.append("uv2_{}".format(i))
+#             save_key_list.append("direction0_{}".format(i))
+#             save_key_list.append("direction1_{}".format(i))
+#             save_key_list.append("direction2_{}".format(i))
+#             save_key_list.append("depth0_{}".format(i))
+#             save_key_list.append("depth1_{}".format(i))
+#             save_key_list.append("depth2_{}".format(i))
+
+#         output_path = os.path.join(path, "train", f"{scene_str}.pkl.zst")
+#         scene_id = int(scene_str)
+#         folder = os.path.join(path, f"{scene_id}")
+#         sample = {}
+
+#         for key in  save_key_list:
+#             exr_path = os.path.join(folder, f"{key}_{scene_id:05d}.exr")
+#             if key not in buffer_channel.keys():
+#                 data = pyexr.read(exr_path)
+#             else:
+#                 data = pyexr.read(exr_path)[..., : buffer_channel[key]]
+
+#             sample[key] = torch.Tensor(data).cuda()  # shape: (H,W,C)
+     
+#         #pyexr.write("H:/Falcor/media/inv_rendering_scenes/object_level_config/Bunny/{}roughness.exr".format(scene_id),sample["roughness"].cpu().numpy()) 
+       
+#         sample["node"] = node
+#         #sample["mask"] = (sample["position"].sum(dim=-1,keepdim=True)!=0) & (sample["roughness"] > 0.0001) & (sample["normal"][...,2:3]<0.1)
+        
+#         cctx = zstd.ZstdCompressor(level=3) # level 3 是速度和压缩率的良好平衡
+#         packed = pickle.dumps(sample)
+#         with open(output_path, "wb") as f:
+#             f.write(cctx.compress(packed))
+                
+#         print("Save complete.")
+#     return sample,scene_id
 
 import os
 import json
@@ -386,6 +649,7 @@ def load_impostor2(path):
 
 if __name__ == "__main__":
     path = r"H:\Falcor\datasets\renderdata/cornel_box/"
-    #renderdata_preprocess(path,test=False)
-    renderdata_preprocess2(path,test=False)
-    # load_impostor2(r"H:\Falcor\datasets\impostor\flame\level1/")
+    renderdata_preprocess3(path,test=False)
+    # file_list = os.listdir(r"H:\Falcor\datasets\impostor/")
+    # for file in file_list:
+    #     load_impostor2_optimized(r"H:\Falcor\datasets\impostor/{}/level0/".format(file),12)

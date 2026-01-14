@@ -53,6 +53,7 @@ const ChannelList kInputChannels = {
     { "prePosition",        "gPrePosition",     "Visibility buffer in packed format", true },
     { "preDirection",    "gPreDirection",       "World-space view direction (xyz float format)", true},
     { "preRoughness",    "gPreRoughness",       "World-space view direction (xyz float format)", true},
+    { "preReflectPos",    "gReflectPos",       "World-space view direction (xyz float format)", true},
     // clang-format on
 };
 // Additional output channels.
@@ -63,6 +64,7 @@ const ChannelList kVBufferExtraChannels = {
     { "viewW",          "gViewW",           "View direction in world space",    true /* optional */, ResourceFormat::RGBA32Float }, // TODO: Switch to packed 2x16-bit snorm format.
     { "time",           "gTime",            "Per-pixel execution time",         true /* optional */, ResourceFormat::R32Uint     },
     { "mask",           "gMask",            "Mask",                             true /* optional */, ResourceFormat::R32Float    },
+  
     
 
 };
@@ -99,7 +101,7 @@ RenderPassReflection VBufferRT::reflect(const CompileData& compileData)
     addRenderPassOutputs(reflector, kVBufferExtraChannels, ResourceBindFlags::UnorderedAccess, sz);
     for (int i = 0; i < 11; i++) {
         
-        reflector.addOutput("uv0_"+ std::to_string(i), "uv output")
+        /*reflector.addOutput("uv0_"+ std::to_string(i), "uv output")
             .bindFlags(ResourceBindFlags::UnorderedAccess)
             .format(ResourceFormat::RGBA32Float)
             .texture2D(sz.x, sz.y);
@@ -132,6 +134,18 @@ RenderPassReflection VBufferRT::reflect(const CompileData& compileData)
             .format(ResourceFormat::RGBA32Float)
             .texture2D(sz.x, sz.y);
         reflector.addOutput("direction2_" + std::to_string(i), "uv output")
+            .bindFlags(ResourceBindFlags::UnorderedAccess)
+            .format(ResourceFormat::RGBA32Float)
+            .texture2D(sz.x, sz.y);*/
+        reflector.addOutput("sphere_" + std::to_string(i), "uv output")
+            .bindFlags(ResourceBindFlags::UnorderedAccess)
+            .format(ResourceFormat::RGBA32Float)
+            .texture2D(sz.x, sz.y);
+        reflector.addOutput("wdepth_" + std::to_string(i), "uv output")
+            .bindFlags(ResourceBindFlags::UnorderedAccess)
+            .format(ResourceFormat::RGBA32Float)
+            .texture2D(sz.x, sz.y);
+        reflector.addOutput("debug_" + std::to_string(i), "uv output")
             .bindFlags(ResourceBindFlags::UnorderedAccess)
             .format(ResourceFormat::RGBA32Float)
             .texture2D(sz.x, sz.y);
@@ -376,6 +390,7 @@ void VBufferRT::executeCompute(RenderContext* pRenderContext, const RenderData& 
     rootVar["gPrePosition"] = renderData.getTexture("prePosition");
     rootVar["gPreDirection"] = renderData.getTexture("preDirection");
     rootVar["gPreRoughness"] = renderData.getTexture("preRoughness");
+    rootVar["gReflectPos"] = renderData.getTexture("preReflectPos");
     // ✅ 只绑定 per-frame 数据
     bindShaderData(rootVar, renderData);
     mpComputePass->execute(pRenderContext, uint3(mFrameDim, 1));
@@ -419,7 +434,7 @@ void VBufferRT::bindShaderData(const ShaderVar& var, const RenderData& renderDat
     for (const auto& channel : kVBufferExtraChannels)
         bind(channel);
     for (int i = 0; i < mpScene->mImpostors.size(); i++) {
-        var["gAlbedo0"][i] = getOutput(renderData, "uv0_" + std::to_string(i));
+        /*var["gAlbedo0"][i] = getOutput(renderData, "uv0_" + std::to_string(i));
         var["gAlbedo1"][i] = getOutput(renderData, "uv1_" + std::to_string(i));
         var["gAlbedo2"][i] = getOutput(renderData, "uv2_" + std::to_string(i));
         var["gDepth0"][i] = getOutput(renderData, "depth0_" + std::to_string(i));
@@ -427,7 +442,9 @@ void VBufferRT::bindShaderData(const ShaderVar& var, const RenderData& renderDat
         var["gDepth2"][i] = getOutput(renderData, "depth2_" + std::to_string(i));
         var["gDir0"][i] = getOutput(renderData, "direction0_" + std::to_string(i));
         var["gDir1"][i] = getOutput(renderData, "direction1_" + std::to_string(i));
-        var["gDir2"][i] = getOutput(renderData, "direction2_" + std::to_string(i));
-       
+        var["gDir2"][i] = getOutput(renderData, "direction2_" + std::to_string(i));*/
+        var["gSphere"][i] = getOutput(renderData, "sphere_" + std::to_string(i));
+        var["gWDepth"][i] = getOutput(renderData, "wdepth_" + std::to_string(i));
+        var["gDebug"][i] = getOutput(renderData, "debug_" + std::to_string(i));
     }
 }

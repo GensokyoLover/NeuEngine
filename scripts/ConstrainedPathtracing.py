@@ -26,6 +26,7 @@ def render_graph_MinimalPathTracer():
     g.addEdge("MinimalPathTracer2.position", "VBufferRT2.prePosition")
     g.addEdge("MinimalPathTracer2.reflect", "VBufferRT2.preDirection")
     g.addEdge("MinimalPathTracer2.roughness", "VBufferRT2.preRoughness")
+    g.addEdge("MinimalPathTracer.mind", "VBufferRT2.preReflectPos")
     g.addEdge("MinimalPathTracer.color", "AccumulatePass.input")
     g.addEdge("MinimalPathTracer.type", "AccumulatePass2.input")
     g.markOutput("MinimalPathTracer.position")
@@ -38,17 +39,14 @@ def render_graph_MinimalPathTracer():
     g.markOutput("AccumulatePass.output")
     g.markOutput("MinimalPathTracer.view")
     g.markOutput("MinimalPathTracer.raypos")
-    g.markOutput("MinimalPathTracer.mind")
-    for i in range(5):
-        g.markOutput("VBufferRT2.uv0_{}".format(i))
-        g.markOutput("VBufferRT2.uv1_{}".format(i))
-        g.markOutput("VBufferRT2.uv2_{}".format(i))
-        g.markOutput("VBufferRT2.direction0_{}".format(i))
-        g.markOutput("VBufferRT2.direction1_{}".format(i))
-        g.markOutput("VBufferRT2.direction2_{}".format(i))
-        g.markOutput("VBufferRT2.depth0_{}".format(i))
-        g.markOutput("VBufferRT2.depth1_{}".format(i))
-        g.markOutput("VBufferRT2.depth2_{}".format(i))
+    # g.markOutput("MinimalPathTracer.intersect0")
+    # g.markOutput("MinimalPathTracer.intersect1")
+    # g.markOutput("MinimalPathTracer.intersect2")
+    for i in range(9):
+
+        g.markOutput("VBufferRT2.sphere_{}".format(i))
+        g.markOutput("VBufferRT2.wdepth_{}".format(i))
+        g.markOutput("VBufferRT2.debug_{}".format(i))
 
     
     return g

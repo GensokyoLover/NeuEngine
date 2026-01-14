@@ -109,19 +109,12 @@ def render_graph_MinimalPathTracer(testbed,impostor_cnt):
     g.markOutput("AccumulatePass.output")
     g.markOutput("MinimalPathTracer.view")
     g.markOutput("MinimalPathTracer.raypos")
-    g.markOutput("MinimalPathTracer.mind")
     g.markOutput("MinimalPathTracer.reflect")
     g.markOutput("AccumulatePass2.output")
     for i in range(impostor_cnt):
-        g.markOutput("VBufferRT2.uv0_{}".format(i))
-        g.markOutput("VBufferRT2.uv1_{}".format(i))
-        g.markOutput("VBufferRT2.uv2_{}".format(i))
-        g.markOutput("VBufferRT2.direction0_{}".format(i))
-        g.markOutput("VBufferRT2.direction1_{}".format(i))
-        g.markOutput("VBufferRT2.direction2_{}".format(i))
-        g.markOutput("VBufferRT2.depth0_{}".format(i))
-        g.markOutput("VBufferRT2.depth1_{}".format(i))
-        g.markOutput("VBufferRT2.depth2_{}".format(i))
+        g.markOutput("VBufferRT2.sphere_{}".format(i))
+        g.markOutput("VBufferRT2.wdepth_{}".format(i))
+      
 
     testbed.render_graph = g
 def render_graph_MinimalPathTracer_Debug(testbed):
@@ -178,29 +171,16 @@ def save_compressed_pickle(data, file_path):
         f.write(compressed_data)
 
 
-object_data_list = ["color","position","albedo","specular","normal","roughness","depth","emission","AccumulatePassoutput","view","raypos","mind","reflect","AccumulatePassoutput2"]
+object_data_list = ["color","position","albedo","specular","normal","roughness","depth","emission","AccumulatePassoutput","view","raypos","reflect","AccumulatePassoutput2"]
 for i in range(5):
-    object_data_list.append("uv0_{}".format(i))
-    object_data_list.append("uv1_{}".format(i))
-    object_data_list.append("uv2_{}".format(i))
-    object_data_list.append("direction0_{}".format(i))
-    object_data_list.append("direction1_{}".format(i))
-    object_data_list.append("direction2_{}".format(i))
-    object_data_list.append("depth0_{}".format(i))
-    object_data_list.append("depth1_{}".format(i))
-    object_data_list.append("depth2_{}".format(i))
+    object_data_list.append("sphere_{}".format(i))
+    object_data_list.append("wdepth_{}".format(i))
+
 object_key_dict = {name: i for i, name in enumerate(object_data_list)}
-sellect_list = ["albedo","specular","normal","position","view","AccumulatePassoutput","roughness","raypos","depth","emission","mind","reflect","AccumulatePassoutput2"]
+sellect_list = ["albedo","specular","normal","position","view","AccumulatePassoutput","roughness","raypos","depth","emission","reflect","AccumulatePassoutput2"]
 for i in range(5):
-    sellect_list.append("uv0_{}".format(i))
-    sellect_list.append("uv1_{}".format(i))
-    sellect_list.append("uv2_{}".format(i))
-    sellect_list.append("direction0_{}".format(i))
-    sellect_list.append("direction1_{}".format(i))
-    sellect_list.append("direction2_{}".format(i))
-    sellect_list.append("depth0_{}".format(i))
-    sellect_list.append("depth1_{}".format(i))
-    sellect_list.append("depth2_{}".format(i))
+    sellect_list.append("sphere_{}".format(i))
+    sellect_list.append("wdepth_{}".format(i))
 def pack_object_data(path,camera_resolution,direction_resolution):
     data = {}
     for name in object_data_list:
@@ -483,12 +463,14 @@ def worker_process(worker_id, resolution, scene_name,
     print(f"[Worker {worker_id}] Initializing testbed...")
     
     os_name = platform.system()
+    
     if os_name == "Windows":
         scene_path = r"H:\Falcor\scenes\scene/{}.pyscene".format(scene_name)
         model_path =r"H:\Falcor/model/{}.obj"
         impostor_path =r"H:\Falcor/datasets/impostor/{}/level1/"
         config_path =r"H:\Falcor\configs/{}.json".format(scene_name)
         emissive_path = r"H:\Falcor\emissive_crop\\{}"
+        
     with open(config_path,'r') as f:
         configs = json.load(f)
     # 只有 worker 进程初始化 Falcor
@@ -594,6 +576,10 @@ def worker_process(worker_id, resolution, scene_name,
         node_dict = {}
         for node in node_list:
             node_dict[node["name"]] = node
+            if node["name"] == "back":
+                node_dict[node["name"]]["impostor_name"] = emissive_name
+            else:
+                node_dict[node["name"]]["impostor_name"] = node["name"]
         for key in result.keys():
             node_dict[key]["roughness"] = result[key]["roughness"]
             node_dict[key]["baseColor"] = result[key]["baseColor"]
@@ -679,8 +665,8 @@ def main():
         output_path=datasets_path,
         object_data_dict=object_key_dict,
         select_list=sellect_list,
-        num_workers=3,
-        num_frames=300,
+        num_workers=8,
+        num_frames=200,
         impostor_list=impostor_list,
         emissive_list=emissive_list
     )

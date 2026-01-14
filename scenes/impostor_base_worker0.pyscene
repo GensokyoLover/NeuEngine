@@ -6,29 +6,27 @@ camera.focalLength = 42.0
 sceneBuilder.addCamera(camera)
 
 # ==== AUTO GENERATED FOR WORKER 0 ====
-lightMesh = TriangleMesh()
+dragon = StandardMaterial('dragon')
+dragon.baseColor = float4(1.0, 1.0, 1.0, 1.0)
+dragon.emissiveColor = float3(0.6571308407552208, 0.8650674693717535, 0.3390646399285808)
+dragon.emissiveFactor = 1.0
+dragon.metallic = 1.0
+dragon.roughness = 0.9894038729660246
 
-normal = float3(0, 1, 0)
-
-# 四个角
-lightMesh.addVertex(float3(-0.7071, 0,  0.7071), normal, float2(0, 0))
-lightMesh.addVertex(float3( 0.7071, 0,  0.7071), normal, float2(1, 0))
-lightMesh.addVertex(float3( 0.7071, 0, -0.7071), normal, float2(1, 1))
-lightMesh.addVertex(float3(-0.7071, 0, -0.7071), normal, float2(0, 1))
-
-# 两个三角形
-lightMesh.addTriangle(0, 1, 2)
-lightMesh.addTriangle(0, 2, 3)
-
-
-light = StandardMaterial('Light')
-light.baseColor = float4(0)
-light.emissiveColor = float3(0, 0, 0)
-light.emissiveFactor = 1
-light.roughness = 1
-light.metallic = 1
-sceneBuilder.addMeshInstance(
-    sceneBuilder.addNode('Light', Transform(scaling=1.0, translation=float3(0, 0.0, 0.0), rotationEulerDeg=float3(0, 0, 0))),
-    sceneBuilder.addTriangleMesh(lightMesh, light)
+flags = TriangleMeshImportFlags.GenSmoothNormals | TriangleMeshImportFlags.JoinIdenticalVertices
+dragonMesh = TriangleMesh.createFromFile(
+    r'H:\Falcor/model/dragon.obj',
+    flags
 )
-sceneBuilder.addTextureSlot("Light",r"H:\Falcor\emissive_crop\zoltan-tasi-8Ce-NRKCq4s-unsplash.jpg","Emissive")
+
+sceneBuilder.addMeshInstance(
+    sceneBuilder.addNode(
+        'dragon',
+        Transform(
+            translation=float3(0,0,0),
+            rotationEulerDeg=float3(0,0,0),
+            scaling=1
+        )
+    ),
+    sceneBuilder.addTriangleMesh(dragonMesh, dragon, True)
+)

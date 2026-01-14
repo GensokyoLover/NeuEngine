@@ -31,4 +31,4 @@ sceneBuilder.addMeshInstance(
     sceneBuilder.addNode('Light', Transform(scaling=1.0, translation=float3(0, 0.0, 0.0), rotationEulerDeg=float3(0, 0, 0))),
     sceneBuilder.addTriangleMesh(lightMesh, light)
 )
-sceneBuilder.addTextureSlot("Light",r"H:\Falcor\emissive_crop\zoltan-tasi-8Ce-NRKCq4s-unsplash.jpg","Emissive")
+sceneBuilder.addTextureSlot("Light",r"H:\Falcor\emissive_crop\braden-jarvis-ih5Kq0XowwY-unsplash.jpg","Emissive")

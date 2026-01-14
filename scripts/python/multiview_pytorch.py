@@ -59,7 +59,7 @@ def render_graph_ImpostorTracer(testbed):
     g = testbed.create_render_graph("ImpostorTracer")
     g.create_pass("AccumulatePass","AccumulatePass", {'enabled': True, 'precisionMode': 'Single'})
     g.create_pass("ToneMapper","ToneMapper", {'autoExposure': False, 'exposureCompensation': 0.0})
-    g.create_pass("ImpostorTracer","ImpostorTracer", {'maxBounces': 3})
+    g.create_pass("ImpostorTracer","ImpostorTracer", {'maxBounces': 5})
     g.addEdge("AccumulatePass.output", "ToneMapper.src")
     g.addEdge("ImpostorTracer.color", "AccumulatePass.input")
     g.markOutput("ImpostorTracer.color")
@@ -367,8 +367,8 @@ def main():
     
     finest_resolution = 512
     if os_name == "Windows":
-        folder_path = r"H:\Falcor\emissive_crop/" 
-        #folder_path = r"H:\Falcor/model/" 
+        #folder_path = r"H:\Falcor\emissive_crop/" 
+        folder_path = r"H:\Falcor/model/" 
         output_folder2 =  r"H:\Falcor\datasets/impostor/" 
     else:
         folder_path = r"/seaweedfs_tmp/training/wangjiu/new/NeuEngine/scenes/impostor/"
@@ -376,27 +376,15 @@ def main():
     resolution_list = [1024,512,182,64,24,8]
     file_list = os.listdir(folder_path)
     for file in file_list: 
-
-        # if (file.split(".")[0] + "level3") in file_list:
-        #     continue
-        
         scene_name = file.split(".")[0]
         output_folder =  output_folder2 + scene_name + "/"
 
         os.makedirs(output_folder, exist_ok=True)
         os.makedirs(output_folder + "level1/", exist_ok=True)
-        # Create device and setup renderer.
         if os_name == "Windows":
-            scene_path = r"H:\Falcor\scenes\scene/{}.pyscene".format(scene_name)
-            model_path =r"H:\Falcor/model/{}"
             impostor_path =r"H:\Falcor/datasets/impostor/{}/level1/material.json"
-        #generate_impostor_by_falcor(finest_resolution,testbed,scene_path,output_folder,object_key_dict,sellect_list)
-        # start_render_farm(finest_resolution,testbed,scene_path,output_folder,object_key_dict,sellect_list)
         task_queue = mp.Queue()
-        # 启动 Worker
         workers = []
-    
-        # testbed.scene.add_impostor()
         centor = np.array([0.0,0.0,0.0])
         o_radius = 1
         base = 1
@@ -418,14 +406,12 @@ def main():
         material["roughness"] = roughness
         with open(impostor_path.format(scene_name),"w") as f:
             json.dump(material,f,indent=4)
-        for subdiv_level in range(1,2):
+        for subdiv_level in range(0,2):
             if subdiv_level>1:
                 level_resolution =  multiply_until_gt_1024(resolution_list[subdiv_level])
             else:
                 level_resolution = finest_resolution
-            # print(level)
-            # continue
-            for wid in range(8):
+            for wid in range(6):
                 p = mp.Process(
                     target=worker_process,
                     args=(emissive,roughness,wid, level_resolution, r"H:\Falcor\scenes/impostor_base.pyscene",file,
@@ -445,9 +431,7 @@ def main():
 
             verts, faces = geodesic_impostor_mesh(subdiv_level)
             faces_list = faces.tolist()  
-            #lookup_table = build_lookup_texture(verts,faces,resolution=128)
             lookup_table = build_lookup_texture_speedup_chunk(verts,faces,resolution=2048,chunk_size=512)
-            #lookup_table2 = build_lookup_texture_speedup(verts,faces,resolution=256)
             lookup_uint = lookup_table.astype(np.uint16)
             cv2.imwrite(level_output_path + "lookup_uint16.png", lookup_uint)
             with open(level_output_path + "faces.json", "w") as f:
@@ -466,13 +450,9 @@ def main():
             p_list = []
             print(f"[Level {subdiv_level}] y_min = {y_min:.4f} (index {y_min_idx}),  "
                 f"y_max = {y_max:.4f} (index {y_max_idx})")
-            
             cnt = 0
             radius_info=[]
             for single_pos in camera_positions:
-           
-
-        
                 scale_radius = o_radius 
                 radius_info.append(scale_radius)
                 single_info = {}
@@ -484,10 +464,8 @@ def main():
                 u_list.append(u)
                 f_list.append(f)
                 p_list.append(single_pos)
-                
                 single_info["camera_up"] = list(up)
                 task_queue.put((cnt, level_output_path + "/{}/".format(cnt),copy.deepcopy(single_info)))
-
                 cnt += 1
                 print(cnt)
             del lookup_uint

@@ -474,18 +474,39 @@ buffer_channel ={
     "view":3,
     "raypos":3,
     "AccumulatePassoutput":3,
+    "AccumulatePassoutput2":3,
     "mind":1,
     "reflect":3,
-    "idepth0":4,
-    "idepth1":4,
-    "idepth2":4,
-    "idirection0":4,
-    "idirection1":4,
-    "idirection2":4,
-    "uv0":4,
-    "uv1":4,
-    "uv2":4,
+
 }
+from PIL import Image
+def read_lookup_png_uint16(path):
+    img = Image.open(path)
+
+    # 确保是 16-bit
+    # mode 通常是 'I;16'
+    arr = np.array(img, dtype=np.uint16)
+
+    # 转成 torch（和你 impostor pipeline 对齐）
+    tensor = torch.from_numpy(arr).long()  # index 用 long 最安全
+    return tensor
+class GeneImpostor:
+    def __init__(self,path):
+        self.baseCameraResolution = 2048
+        self.texFaceIndex = torch.Tensor(read_lookup_png_uint16(
+            path + r"/lookup_uint16.png"
+        )).cuda()
+        with open(path + r"faces.json","r") as f:
+            self.cFace = torch.Tensor(json.load(f)).cuda()
+        with open(path + r"position.json","r") as f:
+            self.cPos = torch.Tensor(json.load(f)).cuda()
+        with open(path + r"right.json","r") as f:
+            self.cRight = torch.Tensor(json.load(f)).cuda()
+        with open(path + r"up.json","r") as f:
+            self.cUp = torch.Tensor(json.load(f)).cuda()
+        with open(path + r"forward.json","r") as f:
+            self.cForward = torch.Tensor(json.load(f)).cuda()
+        print("init succeed")
 class ImpostorPT:
     def __init__(self):
         # scalar

@@ -39,18 +39,22 @@ RWTexture2D<float4> gViewW;
 RWTexture2D<uint> gTime;
 RWTexture2D<float> gMask;
 
-RWTexture2D<float4> gAlbedo0[objectCount];
-RWTexture2D<float4> gAlbedo1[objectCount];
-RWTexture2D<float4> gAlbedo2[objectCount];
-RWTexture2D<float4> gDepth0[objectCount];
-RWTexture2D<float4> gDepth1[objectCount];
-RWTexture2D<float4> gDepth2[objectCount];
-RWTexture2D<float4> gDir1[objectCount];
-RWTexture2D<float4> gDir2[objectCount];
-RWTexture2D<float4> gDir0[objectCount];
+// RWTexture2D<float4> gAlbedo0[objectCount];
+// RWTexture2D<float4> gAlbedo1[objectCount];
+// RWTexture2D<float4> gAlbedo2[objectCount];
+// RWTexture2D<float4> gDepth0[objectCount];
+// RWTexture2D<float4> gDepth1[objectCount];
+// RWTexture2D<float4> gDepth2[objectCount];
+// RWTexture2D<float4> gDir1[objectCount];
+// RWTexture2D<float4> gDir2[objectCount];
+// RWTexture2D<float4> gDir0[objectCount];
+RWTexture2D<float4> gSphere[objectCount];
+RWTexture2D<float4> gWDepth[objectCount];
+RWTexture2D<float4> gDebug[objectCount];
 RWTexture2D<float4> gPrePosition;
 RWTexture2D<float4> gPreDirection;
 RWTexture2D<float4> gPreRoughness;
+RWTexture2D<float4> gReflectPos;
 
 #define is_valid(name) (is_valid_##name != 0)
 
@@ -636,8 +640,8 @@ bool CheckImpostorHit(
     float eps_max = rayDepthMax * depth_tanh;
     // 6. 深度重叠测试 (Intersection Test)
     // 逻辑：光线的最大深度大于物体的最小深度，且光线的最小深度小于物体的最大深度(带阈值)
-    
-    if (textureDepth.x - eps_min < rayDepthMax && rayDepthMin - (1 / 128.0) < textureDepth.y + eps_max)
+
+    if (textureDepth.x - eps_min-(1 / 256.0)< rayDepthMax && rayDepthMin - (1 / 256.0) < textureDepth.y + eps_max)
     {
         return true;
     }
@@ -928,7 +932,7 @@ bool SphereCheckImpostorHit(// 球体假设
     // 6. 深度重叠测试 (Intersection Test)
     // 逻辑：光线的最大深度大于物体的最小深度，且光线的最小深度小于物体的最大深度(带阈值)
     
-    if (textureDepth.x < rayDepthMax + (1 / 128.0) && rayDepthMin - (1 / 128.0) < textureDepth.y)
+    if (textureDepth.x < rayDepthMax + (1 / 512.0) && rayDepthMin - (1 / 512.0) < textureDepth.y)
     {
         // sample = float4(0);
         return true;
@@ -1445,12 +1449,12 @@ float3 AccStepRecursiveTraverseImpostorImageDDA(
     
     // 2. 定义步长常量
     // 目标精度 (最小步长)
-    const float MIN_STEP_SCALE = 1.0 / 512.0;
+    const float MIN_STEP_SCALE = 1.0 / 1024.0;
     // 初始步长 (例如 16倍 于最小步长，可根据 DepthMap 的复杂度调整，太大会漏掉薄片)
     const float MAX_STEP_SCALE = 1.0 / 8.0;
 
     // 减少最大迭代次数，因为大步长不需要那么多步
-    const int MAX_STEPS = 512;
+    const int MAX_STEPS = 1024;
 
     uint total_iters = 0;
     uint sampleLevel;
@@ -1471,7 +1475,7 @@ float3 AccStepRecursiveTraverseImpostorImageDDA(
         float rViewInv = 1.0 / impostor.cRadius[0][triView[viewid]];
         //isHit[viewid] = camR.z + camU.z + camP.z + rView + rViewInv;
         // // 当前视角的动态步长
-        uint currentStepScale = 64;
+        uint currentStepScale = 128;
 
         // 迭代计数
         int loop_iter = 0;
@@ -1756,103 +1760,114 @@ float4 sampleImpostorSingleViewLevel(uint2 pixel, in Impostor impostor, float3 r
             anyHit = true;
         }
     }
-
+    float3 hitposEnter = hitDepthEnter * (1) * rayDirW + rayPosW;
+    float hitRadius = depth_tanh * hitDepthEnter;
+    if (anyHit) {
+        gSphere[idx][pixel] = float4(hitposEnter, hitRadius);
+        gWDepth[idx][pixel] = float4(hitDepthEnter * dirScale, -rayDirW.x,-rayDirW.y,-rayDirW.z);
+        
+    }
+    else {
+        gSphere[idx][pixel] = float4(-1);
+        gWDepth[idx][pixel] = float4(-1);
+    }
     // return sampleUV;
     // gAlbedo0[0] = float4(hitDepthEnterList[0]);
     // return gAlbedo0[0];
     
-    for (int i = 0; i < 3; i++) {
-        // if (!isHit[i])
-        //     continue;
-        viewIdx = triView[i];
-
-        // float hitDepthEnter = hitDepthEnterList[i];
-        float hitDepthEnter = hitDepthEnter;
-        //float hitDepthExit = hitDepthExitList[i];
-        float3 hitposEnter = hitDepthEnter * (1) * rayDirW + rayPosW;
-        //float3 hitposExit = hitDepthExit * (1) * rayDirW + rayPosW;
-        float3 hitpos = hitDepthEnter * rayDirW + rayPosW;
-        float hitRadius = depth_tanh * hitDepthEnter;
-        float3 hitSphere = (hitDepthEnter + hitDepthEnter * depth_tanh) * rayDirW + rayPosW;
+    // for (int i = 0; i < 3; i++) {
+    //     // if (!isHit[i])
+    //     //     continue;
         
-        float3 camPos = impostor.cPosition[0][viewIdx];
-        float3 camR = impostor.cRight[0][viewIdx];
-        float3 camU = impostor.cUp[0][viewIdx];
-        float3 camF = impostor.cForward[0][viewIdx];
-        float rView = impostor.cRadius[0][viewIdx];
-        float3 delta = hitpos - camPos;
-        float x = dot(delta, camR);
-        float y = dot(delta, camU);
-        float2 uv = float2(x, y) * (0.5 / rView) + 0.5;
-        float depth =
-                SingleSampleImpostorPoint(impostor.texDepthArray,
-                                        impostor.samplerPoint[0],
-                                        viewIdx,
-                                        uv, hitSampleLevel[i]).r;
+    //     viewIdx = triView[i];
 
-        float2 textureDepth2 = SampleImpostorDepth4Texels(
-            impostor.texDepthArray[hitSampleLevel[i]],
-            viewIdx,
-            uv,
-            hitSampleLevel[i],
-            uint2(512, 512)
-        );
-        float uvLenth = hitDepthEnter * depth_tanh * (1.0 / rView) * 0.5;
-        float2 textureDepth3;
-        textureDepth3 = SmartMinMaxSample( impostor, viewIdx, float2(sampleUV[i].x, sampleUV[i].y), float2(sampleUV[i].z,sampleUV[i].w), float2(512, 512), level);
+    //     // float hitDepthEnter = hitDepthEnterList[i];
+    //     float hitDepthEnter = hitDepthEnter;
+    //     //float hitDepthExit = hitDepthExitList[i];
+    //     float3 hitposEnter = hitDepthEnter * (1) * rayDirW + rayPosW;
+    //     //float3 hitposExit = hitDepthExit * (1) * rayDirW + rayPosW;
+    //     float3 hitpos = hitDepthEnter * rayDirW + rayPosW;
+    //     float hitRadius = depth_tanh * hitDepthEnter;
+    //     float3 hitSphere = (hitDepthEnter + hitDepthEnter * depth_tanh) * rayDirW + rayPosW;
+        
+    //     float3 camPos = impostor.cPosition[0][viewIdx];
+    //     float3 camR = impostor.cRight[0][viewIdx];
+    //     float3 camU = impostor.cUp[0][viewIdx];
+    //     float3 camF = impostor.cForward[0][viewIdx];
+    //     float rView = impostor.cRadius[0][viewIdx];
+    //     float3 delta = hitpos - camPos;
+    //     float x = dot(delta, camR);
+    //     float y = dot(delta, camU);
+    //     float2 uv = float2(x, y) * (0.5 / rView) + 0.5;
+    //     float depth =
+    //             SingleSampleImpostorPoint(impostor.texDepthArray,
+    //                                     impostor.samplerPoint[0],
+    //                                     viewIdx,
+    //                                     uv, hitSampleLevel[i]).r;
 
-        float3 P_view = camPos +
-                    (x * camR) +
-                    (y * camU) +
-                    (depth * camF);
-        float3 P_view2 = camPos +
-                    (x * camR) +
-                    (y * camU) +
-                    (textureDepth2.x * camF);
-        float3 P_view3 = camPos +
-                    (x * camR) +
-                    (y * camU) +
-                    (textureDepth3.x * camF);
-        float max_interval = max(sampleUV[i].y - sampleUV[i].x, sampleUV[i].w - sampleUV[i].z) /2;
-        float radius = max_interval * rView;
-        float3 ConeScale = float3(textureDepth3.x, textureDepth3.y, radius);
-        // if (length(hitpos - P_view) < 1 / 128 * 1) {
-        //     result = float4(normal, 1);
-        // }
-        float2 midUV = float2(sampleUV[i].x + sampleUV[i].y, sampleUV[i].z + sampleUV[i].w) * 0.5;
-        float lenth = max(sampleUV[i].y - sampleUV[i].x, sampleUV[i].w - sampleUV[i].z) / 2;
-        float4 trueUV = float4(uv.x - uvLenth, uv.x + uvLenth, uv.y - uvLenth, uv.y + uvLenth);
+    //     float2 textureDepth2 = SampleImpostorDepth4Texels(
+    //         impostor.texDepthArray[hitSampleLevel[i]],
+    //         viewIdx,
+    //         uv,
+    //         hitSampleLevel[i],
+    //         uint2(512, 512)
+    //     );
+    //     float uvLenth = hitDepthEnter * depth_tanh * (1.0 / rView) * 0.5;
+    //     float2 textureDepth3;
+    //     textureDepth3 = SmartMinMaxSample( impostor, viewIdx, float2(sampleUV[i].x, sampleUV[i].y), float2(sampleUV[i].z,sampleUV[i].w), float2(512, 512), level);
 
-        if (i == 0 && textureDepth2.x < 9) {
-            gAlbedo0[idx][pixel] = trueUV;
-            gDepth0[idx][pixel] = float4(ConeScale, hitDepthEnter);
-            gDir0[idx][pixel] = float4(dirScale, viewIdx,0, viewIdx);
+    //     float3 P_view = camPos +
+    //                 (x * camR) +
+    //                 (y * camU) +
+    //                 (depth * camF);
+    //     float3 P_view2 = camPos +
+    //                 (x * camR) +
+    //                 (y * camU) +
+    //                 (textureDepth2.x * camF);
+    //     float3 P_view3 = camPos +
+    //                 (x * camR) +
+    //                 (y * camU) +
+    //                 (textureDepth3.x * camF);
+    //     float max_interval = max(sampleUV[i].y - sampleUV[i].x, sampleUV[i].w - sampleUV[i].z) /2;
+    //     float radius = max_interval * rView;
+    //     float3 ConeScale = float3(textureDepth3.x, textureDepth3.y, radius);
+    //     // if (length(hitpos - P_view) < 1 / 128 * 1) {
+    //     //     result = float4(normal, 1);
+    //     // }
+    //     float2 midUV = float2(sampleUV[i].x + sampleUV[i].y, sampleUV[i].z + sampleUV[i].w) * 0.5;
+    //     float lenth = max(sampleUV[i].y - sampleUV[i].x, sampleUV[i].w - sampleUV[i].z) / 2;
+    //     float4 trueUV = float4(uv.x - uvLenth, uv.x + uvLenth, uv.y - uvLenth, uv.y + uvLenth);
 
-        }
-        if (i == 0 && textureDepth2.x == 10) {
-            gAlbedo0[idx][pixel] = float4(textureDepth2.x);
-            gDepth0[idx][pixel] = float4(0);
-        }
-        if (i == 1 && textureDepth2.x < 9) {
-            gAlbedo1[idx][pixel] = trueUV;
-            gDepth1[idx][pixel] = float4(ConeScale, hitDepthEnter);
-            gDir1[idx][pixel] = float4(dirScale, viewIdx,0, viewIdx);
+    //     if (i == 0 && textureDepth2.x < 9) {
+    //         gAlbedo0[idx][pixel] = trueUV;
+    //         gDepth0[idx][pixel] = float4(ConeScale, hitDepthEnter);
+    //         gDir0[idx][pixel] = float4(dirScale, viewIdx,0, viewIdx);
 
-        }
-        if (i == 1 && textureDepth2.x == 10) {
-            gAlbedo1[idx][pixel] = float4(textureDepth2.x);
-            gDepth1[idx][pixel] = float4(0);
-        }
-        if (i == 2 && textureDepth2.x < 9) {
-            gAlbedo2[idx][pixel] = trueUV;
-            gDepth2[idx][pixel] = float4(ConeScale, hitDepthEnter);
-            gDir2[idx][pixel] = float4(dirScale, viewIdx,0, viewIdx);
-        }
-        if (i == 2 && textureDepth2.x == 10) {
-            gAlbedo2[idx][pixel] = float4(textureDepth2.x);
-            gDepth2[idx][pixel] = float4(0);
-        }
-    }
+    //     }
+    //     if (i == 0 && textureDepth2.x == 10) {
+    //         gAlbedo0[idx][pixel] = float4(textureDepth2.x);
+    //         gDepth0[idx][pixel] = float4(0);
+    //     }
+    //     if (i == 1 && textureDepth2.x < 9) {
+    //         gAlbedo1[idx][pixel] = trueUV;
+    //         gDepth1[idx][pixel] = float4(ConeScale, hitDepthEnter);
+    //         gDir1[idx][pixel] = float4(dirScale, viewIdx,0, viewIdx);
+
+    //     }
+    //     if (i == 1 && textureDepth2.x == 10) {
+    //         gAlbedo1[idx][pixel] = float4(textureDepth2.x);
+    //         gDepth1[idx][pixel] = float4(0);
+    //     }
+    //     if (i == 2 && textureDepth2.x < 9) {
+    //         gAlbedo2[idx][pixel] = trueUV;
+    //         gDepth2[idx][pixel] = float4(ConeScale, hitDepthEnter);
+    //         gDir2[idx][pixel] = float4(dirScale, viewIdx,0, viewIdx);
+    //     }
+    //     if (i == 2 && textureDepth2.x == 10) {
+    //         gAlbedo2[idx][pixel] = float4(textureDepth2.x);
+    //         gDepth2[idx][pixel] = float4(0);
+    //     }
+    // }
 
     // return float4(iter);
     return float4(1);

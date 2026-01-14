@@ -463,7 +463,7 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim)
         gDepth[pixel].r = 10;
         gDepth[pixel].g = -10;
         gDepth[pixel].b = 1000;
-        gMinDepth[DispatchRaysIndex().xy].rgb = 1000;
+        
         gPosition[pixel] = 0;
         gAlbedo[pixel] = 0;
         gSpecular[pixel] = 0;
@@ -474,6 +474,7 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim)
         gRayPos[pixel] = 0;
         gReflect[pixel] = 0;
     }
+    gMinDepth[DispatchRaysIndex().xy].rgb = 0;
     gView[DispatchRaysIndex().xy] = float4(-primaryRayDir, 1);
     
     gRayPos[DispatchRaysIndex().xy] = float4(primaryRayOrigin, 1);
@@ -526,8 +527,8 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim)
         // Prepare ray payload.
         ScatterRayData rayData = ScatterRayData(sg);
         ScatterRayData rayReflectData = ScatterRayData(sg);
-
         // Generate scatter ray.
+
         if (!generateScatterRay(sd, mi, isCurveHit, rayOrigin, rayData))
             rayData.terminated = true;
         
@@ -583,11 +584,12 @@ float3 tracePath(const uint2 pixel, const uint2 frameDim)
             + localDir.y * B
             + localDir.z * R;
 
-        rayReflectData.direction = normalize(sampledDir);
+
+        //gMinDepth[DispatchRaysIndex().xy].rgb = rayReflectData.direction;
         traceScatterRay(rayReflectData);
-       // gMinDepth[DispatchRaysIndex().xy].rgb = rayReflectData.pathLength;
-        if (rayReflectData.pathLength == 1)
-            gMinDepth[DispatchRaysIndex().xy].rgb =  min(length(rayReflectData.origin - sd.posW), gMinDepth[DispatchRaysIndex().xy].r);
+        // gMinDepth[DispatchRaysIndex().xy].rgb = rayReflectData.pathLength;
+        // if (rayReflectData.pathLength == 1)
+        gMinDepth[DispatchRaysIndex().xy].rgb = rayReflectData.origin;
         gDepth[DispatchRaysIndex().xy].b = min(length(rayReflectData.origin - sd.posW), gDepth[DispatchRaysIndex().xy].b);
 
         // gDepth[DispatchRaysIndex().xy] = gScene.camera.data.frameWidth;

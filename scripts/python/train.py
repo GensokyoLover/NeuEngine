@@ -127,11 +127,8 @@ from torch.utils.tensorboard import SummaryWriter
 import math
 ## dataloader
 from torch.utils.data import DataLoader
-impostor = load_impostor("Light",1)
 
-camera_pos = impostor.cPosition[0].clone().float().cuda()
-forward    = impostor.cForward[0].clone().float().cuda()
-up         = torch.tensor([0,1,0], dtype=torch.float32).cuda()
+generalImpostor = GeneImpostor(r"H:\Falcor\datasets\impostor\Bunny\level0/")
 
 W, H = 256, 256
 
@@ -150,8 +147,17 @@ roughness = torch.round(torch.arange(0.0, 1.0 + 1e-9, 0.01) * 100) / 100
 theta95_deg = ggx_theta_from_roughness(roughness, alpha_is_roughness_sq=True, degrees=True,energy_clamp=75).cuda()
 # dataset_process(r"H:/Falcor/media/inv_rendering_scenes/bunny_ref_nobunny_roughnesscorrect/",impostor)
 # exit()
-impostor =load_zst(r"H:\Falcor\datasets\impostor\flame\level1/impostor.pkl.zst")
-label = "1920_1080level3"
+
+geometry_impostor_dict = {}
+for static_impostor_name in ["floor","ceil","back","left","right"]:
+    impostor =load_zst(r"H:\Falcor\datasets\impostor\{}\level0/impostor.pkl.zst".format(static_impostor_name))
+    geometry_impostor_dict[static_impostor_name] = impostor
+emissive_impostor_dict = {}
+impostor_list = os.listdir(r"H:\Falcor\datasets\impostor")
+for emissive_impostor_name in impostor_list:
+    emissive_impostor =load_zst(r"H:\Falcor\datasets\impostor\{}\level0/impostor.pkl.zst".format(emissive_impostor_name))
+    emissive_impostor_dict[emissive_impostor_name] = emissive_impostor.texDict["emission"]
+label = "960_540level0"
 log_dir = "./runs/{}".format(label)
 ensure_dir(log_dir)
 writer = SummaryWriter(log_dir=log_dir)
@@ -161,15 +167,15 @@ ensure_dir(debug_dir)
 ckpt_save_path = "./ckpt/{}".format(label)
 ensure_dir(ckpt_save_path)
 global_step = 0
-training_data = ImpostorTrainingDataset(r"H:/Falcor/datasets/renderdata/flame/train")
-#test_data = ImpostorTrainingTestDataset(r"H:/Falcor/media/inv_rendering_scenes/bunny_ref_nobunny9_25/")
+training_data = ImpostorTrainingDataset(r"H:/Falcor/datasets/renderdata/cornel_box/train")
 training_data_loader = DataLoader(training_data, batch_size=1, shuffle=True)
-#test_data_loader = DataLoader(test_data, batch_size=1, shuffle=False)
-emissive_encoder = MultiScaleImageEncoder(3,128).cuda()
+emissive_encoder = MultiScaleImageEncoder(4,64).cuda()
 geo_encoder = MultiScaleImageEncoder(6,128).cuda()
-image_decoder = ImageDecoder(10 + 128,256).cuda()
+image_decoder = ImageDecoder(10 + 64,256).cuda()
 image_decoder2 = ImageDecoder(10,256).cuda()
-mlp_weight = MLP15to3Softmax().cuda()
+mlp_weight = LightweightBlender().cuda()
+feature_decoder = FeatureDecoder(64).cuda()
+#mlp_weight = LightweightBlender().cuda()
 
 
 if ckpt_path != False:
@@ -199,15 +205,9 @@ optimizer = torch.optim.AdamW(
 
 criterion = torch.nn.L1Loss()   
 num_epochs = 1000
-
-
-# roughness: 0.00, 0.01, ..., 1.00
-
-
-# 打印 CSV（roughness,theta95_deg）
-# for r, th in zip(roughness, theta95_deg):
-#     print(f"{r:.2f},{th:.6f}")
+W,H
 sample_key = r"reference_uvi2"
+print(torch.inf)
 for epoch in range(num_epochs):
     print(f"===== Epoch {epoch+1}/{num_epochs} =====")
 
@@ -216,70 +216,138 @@ for epoch in range(num_epochs):
     total_loss = 0.0
     for i, (train_data, scene_id) in enumerate(pbar):
         train_data = tocuda(train_data)
+        _,W,H,_ = train_data["emission"].shape
         scale = 1.0/ impostor.cRadius[0]
-        viewidx = train_data["sampleView"][:, 0, 0, :]
         train_data["position"] = train_data["position"] * scale
-        for b in range(3):
-            train_data["idepth{}".format(b)] = train_data["idepth{}".format(b)] * scale
-        train_data["hitdepth"] = train_data["idepth0"][...,3:4] 
-        depthDownList = []
-        positionDownList = []
-        emissionDownList = [[],[],[]]
-        for b in range(viewidx.shape[0]):
-            emission = sellect_data(impostor.texDict, viewidx[b].long(), ["emission"])
-            depth = sellect_data(impostor.texDict, viewidx[b].long(), ["depth"])
-            direction = sellect_data(impostor.texDict, viewidx[b].long(), ["view"])
-            origin = sellect_data(impostor.texDict, viewidx[b].long(), ["raypos"])
-            normal = sellect_data(impostor.texDict, viewidx[b].long(), ["normal"])
-            centor = origin - direction * depth
-        depthDownList.append(depth)
-        positionDownList.append(origin)
-        for b in range(3):
-            emissionDownList[b].append(emission[b:b+1,...].permute(0,3,1,2))
-            for level in range(4):
-                depthDownList.append(min_downsample_pool(depth, 4**(level+1)))
-                positionDownList.append(mean_downsample_pool(origin, 4**(level+1)))
-                emissionDownList[b].append(mean_downsample_pool(emission[b:b+1,...], 4**(level+1)).permute(0,3,1,2))
-        
-        gbuffer_input = sellect_gbuffer_data(train_data, ["position", "normal", "roughness", "view"])
-        feature_list = []
-        #print(train_data["roughness"].mean())
-        for b in range(3):
-            emission_feature = emissive_encoder(emission[b:b+1,...])
-            feature = trilinear_mipmap_sample(emission_feature,train_data["uv{}".format(b)])
-            emission_vis = trilinear_mipmap_sample(emissionDownList[b],train_data["uv{}".format(b)])
-            # pyexr.write(r"H:\Falcor\debug/emission_vis_{}.exr".format(b),emission_vis[0,...].permute(1,2,0).cpu().numpy())
-            # pyexr.write(r"H:\Falcor\debug/gt_vis_{}.exr".format(b),train_data["AccumulatePassoutput"][0,...].cpu().numpy())
-            feature_list.append(feature.permute(0,2,3,1))
-        
-        reflect_cone = torch.cat([train_data["position"],train_data["reflect"],train_data["roughness"],train_data["hitdepth"]],dim=-1)
-        reflect_position = train_data["position"] + train_data["reflect"] * train_data["hitdepth"]
-        for b in range(3):
-            view_depth = ((reflect_position - impostor.cPosition[viewidx[0,b].long()].view(1,1,1,3)) * impostor.cForward[viewidx[0,b].long()].view(1,1,1,3)).sum(dim=-1,keepdim=True)
-            normalize_depth = (train_data["idepth{}".format(b)][...,0:2] - view_depth) / (train_data["idepth{}".format(b)][...,2:3] + 1e-2)
-            #reflect_cone = torch.cat([reflect_cone,train_data["idirection{}".format(b)][...,:3],train_data["idepth{}".format(b)][...,:2]],dim=-1)
-            reflect_cone = torch.cat([reflect_cone,train_data["idirection{}".format(b)][...,:3],normalize_depth],dim=-1)
-            # pyexr.write(r"H:\Falcor\debug/normalize_depth_{}.exr".format(b),normalize_depth[0,...].cpu().numpy())
-            # pyexr.write(r"H:\Falcor\debug/train_data_{}.exr".format(b),train_data["idepth{}".format(b)][0,...].cpu().numpy())
-            # pyexr.write(r"H:\Falcor\debug/view_depth_{}.exr".format(b),view_depth[0,...].cpu().numpy())
-        #continue
-        weights = mlp_weight(reflect_cone)
-        feature = torch.cat(feature_list,dim=0)
-        combine_feature = (feature * weights.permute(3, 1, 2, 0)).sum(dim=0, keepdim=True)
-       
+        train_data_mask = train_data["roughness"] > 0.2
+        impostor_list = train_data["node"].keys()
+        emissive_feature_list = []
+        alpha_feature_list = []
+        impostorID =0
 
-        decoder_input = torch.cat([combine_feature, gbuffer_input], dim=-1)
+        #for node in train_data["node"].keys():
+        for node in ["back"]:
+            impostor_namename = train_data["node"][node]["impostor_name"][0].split(".")[0]
+            emissive_feature = emissive_encoder(torch.cat([emissive_impostor_dict[impostor_namename],geometry_impostor_dict[node].texDict["depth"][...,:1]],dim=-1))
+            local_dir = train_data["wdepth_{}".format(impostorID)][...,1:4].view(-1,3)
+            hit_depth = train_data["wdepth_{}".format(impostorID)][...,:1]
+            view_idx = get_nearest_impostor_view_batch(generalImpostor,local_dir).view(1,W,H,3)
+            sphere_position = train_data["sphere_{}".format(impostorID)][...,0:3]
+            sphere_radius = train_data["sphere_{}".format(impostorID)][...,3:4]
+            impostor_mask = sphere_radius < -0.1
+            impostor_mask = impostor_mask.permute(0,3,1,2)
+            # pyexr.write(r"H:/Falcor/debug/view_idx_{}.exr".format(impostorID),view_idx[0,...].cpu().numpy())
+            # pyexr.write(r"H:/Falcor/debug/sphere_position_{}.exr".format(impostorID),sphere_position[0,...].cpu().numpy())
+            
+            camera_pos = generalImpostor.cPos[view_idx.long()]
+            camera_right = generalImpostor.cRight[view_idx.long()]
+            camera_forward = generalImpostor.cForward[view_idx.long()]
+            camera_up = generalImpostor.cUp[view_idx.long()]
+            camera_to_sphere = sphere_position.unsqueeze(dim=-2) - camera_pos
+            # dot camera_to_sphere and camera_right = sample u
+            sample_u = (camera_to_sphere * camera_right).sum(dim=-1,keepdim=True) 
+            sample_v = (camera_to_sphere * camera_up).sum(dim=-1,keepdim=True)
+            view_depth = (camera_to_sphere * camera_forward).sum(dim=-1).permute(3,1,2,0)
+            sample_uv = torch.cat([sample_u,sample_v],dim=-1)
+
+
+            emissive_impostor_multiscale_list =generate_mipmap_chain(emissive_impostor_dict[impostor_namename].permute(0,3,1,2),4)
+         
+            mindepth_impostor_multiscale_list =generate_mipmap_chain_minmax(geometry_impostor_dict[node].texDict["depth"][...,0:1].permute(0,3,1,2),2,"min")
+            maxdepth_impostor_multiscale_list =generate_mipmap_chain_minmax(geometry_impostor_dict[node].texDict["depth"][...,1:2].permute(0,3,1,2),2,"max")
+      
+        
+            floor_emissive,ceil_emission,emission_alpha = sample_impostor_features_mipmap_dual(emissive_impostor_multiscale_list,view_idx.permute(3,1,2,0),             # 你的 view_idx (B, W, H, 3) 会在函数内被处理
+                sample_uv.permute(3,0,1,2,4).squeeze(), 
+                sphere_radius,mode="bilinear")
+            floor_min_depth,ceil_min_depth,min_depth_alpha = sample_impostor_features_mipmap_dual(mindepth_impostor_multiscale_list,view_idx.permute(3,1,2,0),             # 你的 view_idx (B, W, H, 3) 会在函数内被处理
+                sample_uv.permute(3,0,1,2,4).squeeze(), 
+                sphere_radius,mode="nearest_min")
+            floor_max_depth,ceil_max_depth,max_depth_alpha = sample_impostor_features_mipmap_dual(maxdepth_impostor_multiscale_list,view_idx.permute(3,1,2,0),             # 你的 view_idx (B, W, H, 3) 会在函数内被处理
+                sample_uv.permute(3,0,1,2,4).squeeze(),
+                sphere_radius,mode="nearest_max")
+            ## normalized
+            camera_forward = camera_forward.permute(3,0,1,2,4).squeeze()
+            floor_min_depth = (floor_min_depth - view_depth) /(sphere_radius + 1e-3)
+            ceil_min_depth = (ceil_min_depth - view_depth) /(sphere_radius + 1e-3)
+            floor_max_depth = (floor_max_depth - view_depth) /(sphere_radius + 1e-3)
+            ceil_max_depth = (ceil_max_depth - view_depth) /(sphere_radius + 1e-3)
+            floor_input = torch.cat([floor_min_depth,floor_max_depth,camera_forward],dim=-1).unsqueeze(0)
+            ceil_input = torch.cat([ceil_min_depth,ceil_max_depth,camera_forward],dim=-1).unsqueeze(0)
+            all_geo_feature = torch.cat([floor_input,ceil_input],dim=1)
+            floor_emissive_feature,ceil_emissive_feature,emissive_feature_alpha = sample_impostor_features_mipmap_dual(emissive_feature,view_idx.permute(3,1,2,0),             # 你的 view_idx (B, W, H, 3) 会在函数内被处理
+                sample_uv.permute(3,0,1,2,4).squeeze(),
+                sphere_radius,mode="bilinear")
+            all_emissive_feature = torch.cat([floor_emissive_feature.unsqueeze(0),ceil_emissive_feature.unsqueeze(0)],dim=1).permute(0,1,4,2,3)
+            reflect_cone = torch.cat([train_data["position"],train_data["reflect"],train_data["roughness"],hit_depth],dim=-1)
+            weight = mlp_weight(all_geo_feature.permute(0,1,4,2,3),reflect_cone.permute(0,3,1,2))
+            final_feature = all_emissive_feature * weight.sum(dim=1)
+            node_emissive,node_occlution = feature_decoder(final_feature.sum(dim=1))
+            node_emissive = torch.where(impostor_mask,0,node_emissive)
+            node_occlution = torch.where(impostor_mask,torch.inf,node_occlution)
+            emissive_feature_list.append(node_emissive)
+            alpha_feature_list.append(node_occlution)
+            # print(1)
+            #emissive_feature_alpha = emissive_feature_alpha[...,:1]
+            
+            # trilinear_depth = sample_impostor_features_mipmap_radius(depth_impostor_multiscale_list,view_idx.permute(3,1,2,0),             # 你的 view_idx (B, W, H, 3) 会在函数内被处理
+            #     sample_uv.permute(3,0,1,2,4).squeeze(), 
+            #     sphere_radius)
+            # min_depth = sample_impostor_features_mipmap_minmax(mindepth_impostor_multiscale_list,view_idx.permute(3,1,2,0),             # 你的 view_idx (B, W, H, 3) 会在函数内被处理
+            #     sample_uv.permute(3,0,1,2,4).squeeze(),
+            #     sphere_radius,pooling_mode="min")
+            # max_depth = sample_impostor_features_mipmap_minmax(maxdepth_impostor_multiscale_list,view_idx.permute(3,1,2,0),             # 你的 view_idx (B, W, H, 3) 会在函数内被处理
+            #     sample_uv.permute(3,0,1,2,4).squeeze(),
+            #     sphere_radius,pooling_mode="max")
+            
+            if impostorID==2:
+                None
+                # pyexr.write(r"H:/Falcor/debug/depth_{}_0.exr".format(impostorID),trilinear_depth[0,...].cpu().numpy())
+                # pyexr.write(r"H:/Falcor/debug/depth_{}_1.exr".format(impostorID),trilinear_depth[1,...].cpu().numpy())
+                # pyexr.write(r"H:/Falcor/debug/depth_{}_2.exr".format(impostorID),trilinear_depth[2,...].cpu().numpy())
+                # pyexr.write(r"H:/Falcor/debug/floor_emissive{}_0.exr".format(impostorID),floor_emissive[0,...].cpu().numpy())
+                # pyexr.write(r"H:/Falcor/debug/floor_emissive{}_1.exr".format(impostorID),floor_emissive[1,...].cpu().numpy())
+                # pyexr.write(r"H:/Falcor/debug/floor_emissive{}_2.exr".format(impostorID),floor_emissive[2,...].cpu().numpy())
+                # pyexr.write(r"H:/Falcor/debug/ceil_emission{}_0.exr".format(impostorID),ceil_emission[0,...].cpu().numpy())
+                # pyexr.write(r"H:/Falcor/debug/ceil_emission{}_1.exr".format(impostorID),ceil_emission[1,...].cpu().numpy())
+                # pyexr.write(r"H:/Falcor/debug/ceil_emission{}_2.exr".format(impostorID),ceil_emission[2,...].cpu().numpy())
+
+                # pyexr.write(r"H:/Falcor/debug/floor_min_depth{}_0.exr".format(impostorID),floor_min_depth[0,...].cpu().numpy())
+                # pyexr.write(r"H:/Falcor/debug/floor_min_depth{}_1.exr".format(impostorID),floor_min_depth[1,...].cpu().numpy())
+                # pyexr.write(r"H:/Falcor/debug/floor_min_depth{}_2.exr".format(impostorID),floor_min_depth[2,...].cpu().numpy())
+                # pyexr.write(r"H:/Falcor/debug/ceil_min_depth{}_0.exr".format(impostorID),ceil_min_depth[0,...].cpu().numpy())
+                # pyexr.write(r"H:/Falcor/debug/ceil_min_depth{}_1.exr".format(impostorID),ceil_min_depth[1,...].cpu().numpy())
+                # pyexr.write(r"H:/Falcor/debug/ceil_min_depth{}_2.exr".format(impostorID),ceil_min_depth[2,...].cpu().numpy())
+                # pyexr.write(r"H:/Falcor/debug/floor_max_depth{}_0.exr".format(impostorID),floor_max_depth[0,...].cpu().numpy())
+                # pyexr.write(r"H:/Falcor/debug/floor_max_depth{}_1.exr".format(impostorID),floor_max_depth[1,...].cpu().numpy())
+                # pyexr.write(r"H:/Falcor/debug/floor_max_depth{}_2.exr".format(impostorID),floor_max_depth[2,...].cpu().numpy())
+                # pyexr.write(r"H:/Falcor/debug/ceil_max_depth{}_0.exr".format(impostorID),ceil_max_depth[0,...].cpu().numpy())
+                # pyexr.write(r"H:/Falcor/debug/ceil_max_depth{}_1.exr".format(impostorID),ceil_max_depth[1,...].cpu().numpy())
+                # pyexr.write(r"H:/Falcor/debug/ceil_max_depth{}_2.exr".format(impostorID),ceil_max_depth[2,...].cpu().numpy())
+
+                # pyexr.write(r"H:/Falcor/debug/depth_{}_0.exr".format(impostorID),trilinear_depth[0,...].cpu().numpy())
+                # pyexr.write(r"H:/Falcor/debug/depth_{}_1.exr".format(impostorID),trilinear_depth[1,...].cpu().numpy())
+                # pyexr.write(r"H:/Falcor/debug/depth_{}_2.exr".format(impostorID),trilinear_depth[2,...].cpu().numpy())
+                # pyexr.write(r"H:/Falcor/debug/min_depth_{}_0.exr".format(impostorID),min_depth[0,...].cpu().numpy())
+                # pyexr.write(r"H:/Falcor/debug/min_depth_{}_1.exr".format(impostorID),min_depth[1,...].cpu().numpy())
+                # pyexr.write(r"H:/Falcor/debug/min_depth_{}_2.exr".format(impostorID),min_depth[2,...].cpu().numpy())
+                # pyexr.write(r"H:/Falcor/debug/max_depth_{}_0.exr".format(impostorID),max_depth[0,...].cpu().numpy())
+                # pyexr.write(r"H:/Falcor/debug/max_depth_{}_1.exr".format(impostorID),max_depth[1,...].cpu().numpy())
+                # pyexr.write(r"H:/Falcor/debug/max_depth_{}_2.exr".format(impostorID),max_depth[2,...].cpu().numpy())
+            #sample_emission = torch.grid_sampler(emissive_impostor_dict[impostor_namename].permute(0,3,1,2), sample_uv, mode="bilinear", align_corners=False)
+            impostorID = impostorID + 1
+        final_feature = accumulate_feature_group_alpha(emissive_feature_list,alpha_feature_list)
+        # pyexr.write(r"H:/Falcor/debug/gt0.exr",train_data["AccumulatePassoutput"][0,...].cpu().numpy())
+        # pyexr.write(r"H:/Falcor/debug/gt1.exr",train_data["AccumulatePassoutput2"][0,...].cpu().numpy())
+        # pyexr.write(r"H:/Falcor/debug/gt3.exr",(train_data["AccumulatePassoutput2"]-train_data["emission"])[0,...].cpu().numpy())
+        gbuffer_input = sellect_gbuffer_data(train_data, ["position", "normal", "roughness", "view"])
+
+        decoder_input = torch.cat([final_feature, gbuffer_input.permute(0,3,1,2)], dim=1)
         #decoder_input = torch.cat([combine_feature, gbuffer_input], dim=-1)
         #output = image_decoder2(gbuffer_input)  # 假设输出 (1,H,W,3)
-        output = image_decoder(decoder_input)  # 假设输出 (1,H,W,3)
-
-        # -----------------------
-        # loss + backward
-        # -----------------------
-        # gt：你注释里用的是 AccumulatePassoutput，按你实际 gt 对齐
-        gt = train_data["AccumulatePassoutput"].reshape(1, H, W, 3)
-
-        # 这里按需改 loss（L1/MSE/LPIPS等）
+        output = image_decoder(decoder_input).permute(0,2,3,1)  # 假设输出 (1,H,W,3)
+        gt = train_data["AccumulatePassoutput2"]-train_data["emission"]
+        output = torch.where(train_data_mask, gt,output)
         loss = criterion(output, gt)
 
         optimizer.zero_grad(set_to_none=True)
@@ -287,14 +355,8 @@ for epoch in range(num_epochs):
         total_loss = total_loss + loss.item()
         optimizer.step()
 
-        # -----------------------
-        # tensorboard logging
-        # -----------------------
-        
-
-        # tqdm postfix
         pbar.set_postfix(loss=f"{loss.item():.6f}", step=global_step)
-        if (global_step % 5) == 0 and i < 10:
+        if (global_step % 1) == 0 and i < 10:
             save_path = os.path.join(debug_dir, f"step_{global_step:08d}_scene_{i}.exr")
             save_result_exr(output.detach(), gt.detach(), save_path)
         #break
